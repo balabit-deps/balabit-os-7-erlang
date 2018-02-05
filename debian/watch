@@ -1,0 +1,7 @@
+# Watch control file for uscan
+
+# Compulsory line, this is a version 3 file
+version=3
+
+opts=dversionmangle=s/-dfsg\d*$// \
+  http://www.erlang.org/download/otp_src_([.\d]+).tar.gz
