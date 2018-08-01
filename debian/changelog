@@ -1,3 +1,9 @@
+erlang (1:20.2.2+dfsg-1ubuntu2bb1) bionic; urgency=medium
+
+  * Balabit patched version
+
+ -- Balabit Platform Team <devnull@dev.null>  Wed, 01 Aug 2018 17:09:36 +0200
+
 erlang (1:20.2.2+dfsg-1ubuntu2) bionic; urgency=high
 
   * No change rebuild against openssl1.1.
