@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1999-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2019. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -66,7 +66,9 @@
          otp_11851/1,otp_11879/1,otp_13230/1,
          record_errors/1, otp_11879_cont/1,
          non_latin1_module/1, otp_14323/1,
-         get_stacktrace/1, otp_14285/1, otp_14378/1]).
+         stacktrace_syntax/1,
+         otp_14285/1, otp_14378/1,
+         external_funs/1,otp_15456/1,otp_15563/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -87,7 +89,8 @@ all() ->
      maps, maps_type, maps_parallel_match,
      otp_11851, otp_11879, otp_13230,
      record_errors, otp_11879_cont, non_latin1_module, otp_14323,
-     get_stacktrace, otp_14285, otp_14378].
+     stacktrace_syntax, otp_14285, otp_14378, external_funs,
+     otp_15456, otp_15563].
 
 groups() -> 
     [{unused_vars_warn, [],
@@ -2106,13 +2109,89 @@ otp_5362(Config) when is_list(Config) ->
 			  {calendar,local_time_to_universal_time_dst,1}, "a future release"}}]}},
 
 	  {call_removed_function,
-	   <<"t(X) -> regexp:match(X).">>,
+	   <<"t(X) -> erlang:hash(X, 10000).">>,
 	   [],
 	   {warnings,
-            [{1,erl_lint,{removed,{regexp,match,1},
-			  "removed in R15; use the re module instead"}}]}}
+            [{1,erl_lint,{removed,{erlang,hash,2},{erlang,phash2,2},"20.0"}}]}},
+
+	  {nowarn_call_removed_function_1,
+	   <<"t(X) -> erlang:hash(X, 10000).">>,
+	   [{nowarn_removed,{erlang,hash,2}}],
+	   []},
+
+	  {nowarn_call_removed_function_2,
+	   <<"t(X) -> os_mon_mib:any_function_really(erlang:hash(X, 10000)).">>,
+	   [nowarn_removed],
+	   []},
+
+	  {call_removed_module,
+	   <<"t(X) -> os_mon_mib:any_function_really(X).">>,
+	   [],
+           {warnings,[{1,erl_lint,
+                       {removed,{os_mon_mib,any_function_really,1},
+                        "was removed in 22.0"}}]}},
+
+	  {nowarn_call_removed_module,
+	   <<"t(X) -> os_mon_mib:any_function_really(X).">>,
+	   [{nowarn_removed,os_mon_mib}],
+	   []}
 
 	 ],
+
+    [] = run(Config, Ts),
+    ok.
+
+%% OTP-15456. All compiler options can now be given in the option list
+%% (as opposed to only in files).
+otp_15456(Config) when is_list(Config) ->
+    Ts = [
+          %% {nowarn_deprecated_function,[{M,F,A}]} can now be given
+          %% in the option list as well as in an attribute.
+          %% Wherever it occurs, it is not affected by
+          %% warn_deprecated_function.
+          {otp_15456_1,
+           <<"-compile({nowarn_deprecated_function,{erlang,now,0}}).
+              -export([foo/0]).
+
+              foo() ->
+                  {erlang:now(), random:seed0(), random:seed(1, 2, 3),
+                   random:uniform(), random:uniform(42)}.
+           ">>,
+           {[{nowarn_deprecated_function,{random,seed0,0}},
+             {nowarn_deprecated_function,[{random,uniform,0},
+                                          {random,uniform,1}]},
+             %% There should be no warnings when attempting to
+             %% turn of warnings for functions that are not
+             %% deprecated or not used in the module.
+             {nowarn_deprecated_function,{random,uniform_s,1}},
+             {nowarn_deprecated_function,{erlang,abs,1}},
+             warn_deprecated_function]},
+           {warnings,[{5,erl_lint,
+                       {deprecated,{random,seed,3},
+                        "the 'random' module is deprecated; "
+                        "use the 'rand' module instead"}}]}},
+
+          %% {nowarn_unused_function,[{M,F,A}]} can be given
+          %% in the option list as well as in an attribute.
+          %% It was incorrectly documented to only work when
+          %% given in an attribute.
+          {otp_15456_2,
+           <<"-compile({nowarn_unused_function,foo/0}).
+              foo() -> ok.
+              bar() -> ok.
+              foobar() -> ok.
+              barf(_) -> ok.
+              other() -> ok.
+           ">>,
+           {[{nowarn_unused_function,[{bar,0},{foobar,0}]},
+             {nowarn_unused_function,{barf,1}},
+             %% There should be no warnings when attempting to
+             %% turn of warnings for unused functions that are not
+             %% defined in the module.
+             {nowarn_unused_function,{not_defined_in_module,1}},
+             warn_unused_function]},
+           {warnings,[{6,erl_lint,{unused_function,{other,0}}}]}
+          }],
 
     [] = run(Config, Ts),
     ok.
@@ -2729,7 +2808,7 @@ bif_clash(Config) when is_list(Config) ->
            [],
 	   {errors,[{2,erl_lint,{call_to_redefined_old_bif,{size,1}}}],[]}},
 
-	  %% Verify that warnings can not be turned off in the old way.
+	  %% Verify that warnings cannot be turned off in the old way.
 	  {clash2,
            <<"-export([t/1,size/1]).
               t(X) ->
@@ -3497,10 +3576,12 @@ basic_errors(Config) ->
 
 	  {illegal_record_info,
 	   <<"f1() -> record_info(42, record).
-	      f2() -> record_info(shoe_size, record).">>,
+	      f2() -> record_info(shoe_size, record).
+              f3() -> fun record_info/2.">>,
 	   [],
 	   {errors,[{1,erl_lint,illegal_record_info},
-		    {2,erl_lint,illegal_record_info}],[]}},
+		    {2,erl_lint,illegal_record_info},
+                    {3,erl_lint,illegal_record_info}],[]}},
 
 	  {illegal_expr,
 	   <<"f() -> a:b.">>,
@@ -3929,6 +4010,8 @@ non_latin1_module(Config) ->
         format_error(non_latin1_module_unsupported),
     BadCallback =
         {bad_callback,{'кирилли́ческий атом','кирилли́ческий атом',0}},
+    BadModule =
+        {bad_module,{'кирилли́ческий атом','кирилли́ческий атом',0}},
     "explicit module not allowed for callback "
     "'кирилли́ческий атом':'кирилли́ческий атом'/0" =
         format_error(BadCallback),
@@ -3971,6 +4054,7 @@ non_latin1_module(Config) ->
              {11,erl_lint,illegal_guard_expr},
              {15,erl_lint,non_latin1_module_unsupported},
              {17,erl_lint,non_latin1_module_unsupported},
+             {17,erl_lint,BadModule},
              {20,erl_lint,non_latin1_module_unsupported},
              {23,erl_lint,non_latin1_module_unsupported},
              {25,erl_lint,non_latin1_module_unsupported}],
@@ -3981,8 +4065,9 @@ non_latin1_module(Config) ->
 
 do_non_latin1_module(Mod) ->
     File = atom_to_list(Mod) ++ ".erl",
-    Forms = [{attribute,1,file,{File,1}},
-             {attribute,1,module,Mod},
+    L1 = erl_anno:new(1),
+    Forms = [{attribute,L1,file,{File,1}},
+             {attribute,L1,module,Mod},
              {eof,2}],
     error = compile:forms(Forms),
     {error,_,[]} = compile:forms(Forms, [return]),
@@ -4053,81 +4138,39 @@ otp_14323(Config) ->
     [] = run(Config, Ts),
     ok.
 
-get_stacktrace(Config) ->
-    Ts = [{old_catch,
+stacktrace_syntax(Config) ->
+    Ts = [{guard,
            <<"t1() ->
-                  catch error(foo),
-                  erlang:get_stacktrace().
+                  try error(foo)
+                  catch _:_:Stk when is_number(Stk) -> ok
+                  end.
            ">>,
            [],
-           {warnings,[{3,erl_lint,{get_stacktrace,after_old_catch}}]}},
-          {nowarn_get_stacktrace,
+           {errors,[{3,erl_lint,{stacktrace_guard,'Stk'}}],[]}},
+          {bound,
            <<"t1() ->
-                  catch error(foo),
-                  erlang:get_stacktrace().
-           ">>,
-           [nowarn_get_stacktrace],
-           []},
-          {try_catch,
-           <<"t1(X) ->
-                  try abs(X) of
-                    _ ->
-                      erlang:get_stacktrace()
-                  catch
-                      _:_ -> ok
-                  end.
-
-              t2() ->
+                  Stk = [],
                   try error(foo)
-                  catch _:_ -> ok
-                  end,
-                  erlang:get_stacktrace().
-
-              t3() ->
-                  try error(foo)
-                  catch _:_ ->
-                    try error(bar)
-                    catch _:_ ->
-                      ok
-                    end,
-                    erlang:get_stacktrace()
-                  end.
-
-              no_warning(X) ->
-                  try
-                     abs(X)
-                  catch
-                     _:_ ->
-                       erlang:get_stacktrace()
+                  catch _:_:Stk -> ok
                   end.
            ">>,
            [],
-           {warnings,[{4,erl_lint,{get_stacktrace,wrong_part_of_try}},
-                      {13,erl_lint,{get_stacktrace,after_try}},
-                      {22,erl_lint,{get_stacktrace,after_try}}]}},
-          {multiple_catch_clauses,
-           <<"maybe_error(Arg) ->
-                try 5 / Arg
-                catch
-                    error:badarith ->
-                        _Stacktrace = erlang:get_stacktrace(),
-                        try io:nl()
-                        catch
-                            error:_ -> io:format('internal error')
-                        end;
-                    error:badarg ->
-                        _Stacktrace = erlang:get_stacktrace(),
-                        try io:format(qwe)
-                        catch
-                            error:_ -> io:format('internal error')
-                        end
-                end.
-             ">>,
+           {errors,[{4,erl_lint,{stacktrace_bound,'Stk'}}],[]}},
+          {guard_and_bound,
+           <<"t1() ->
+                  Stk = [],
+                  try error(foo)
+                  catch _:_:Stk when is_integer(Stk) -> ok
+                  end.
+           ">>,
            [],
-           []}],
+           {errors,[{4,erl_lint,{stacktrace_bound,'Stk'}},
+                    {4,erl_lint,{stacktrace_guard,'Stk'}}],[]}}
+         ],
 
     run(Config, Ts),
     ok.
+
 
 %% Unicode atoms.
 otp_14285(Config) ->
@@ -4172,6 +4215,36 @@ otp_14285(Config) ->
             [{1,erl_lint,E4}],
             []}}],
     run(Config, Ts),
+    ok.
+
+external_funs(Config) when is_list(Config) ->
+    Ts = [{external_funs_1,
+           %% ERL-762: Unused variable warning not being emitted.
+           <<"f() ->
+                BugVar = process_info(self()),
+                if true -> fun m:f/1 end.
+              f(M, F) ->
+                BugVar = process_info(self()),
+                if true -> fun M:F/1 end.">>,
+           [],
+           {warnings,[{2,erl_lint,{unused_var,'BugVar'}},
+                      {5,erl_lint,{unused_var,'BugVar'}}]}}],
+    run(Config, Ts),
+    ok.
+
+otp_15563(Config) when is_list(Config) ->
+    Ts = [{otp_15563,
+           <<"-type deep_list(A) :: [A | deep_list(A)].
+              -spec lists:flatten(deep_list(A)) -> [A].
+              -callback lists:concat([_]) -> string().
+              -spec ?MODULE:foo() -> any().
+              foo() -> a.
+           ">>,
+           [warn_unused_vars],
+           {errors,[{2,erl_lint,{bad_module,{lists,flatten,1}}},
+                    {3,erl_lint,{bad_callback,{lists,concat,1}}}],
+            []}}],
+    [] = run(Config, Ts),
     ok.
 
 format_error(E) ->

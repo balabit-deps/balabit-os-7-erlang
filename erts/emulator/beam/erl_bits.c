@@ -55,30 +55,19 @@
 
 static byte get_bit(byte b, size_t a_offs); 
 
-#if defined(ERTS_SMP)
 /* the state resides in the current process' scheduler data */
-#elif defined(ERL_BITS_REENTRANT)
-/* reentrant API but with a hidden single global state, for testing only */
-struct erl_bits_state ErlBitsState_;
-#else
-/* non-reentrant API with a single global state */
-struct erl_bits_state ErlBitsState;
-#endif
 
 #define byte_buf	(ErlBitsState.byte_buf_)
 #define byte_buf_len	(ErlBitsState.byte_buf_len_)
 
-static erts_smp_atomic_t bits_bufs_size;
+static erts_atomic_t bits_bufs_size;
 
 Uint
 erts_bits_bufs_size(void)
 {
-    return (Uint) erts_smp_atomic_read_nob(&bits_bufs_size);
+    return (Uint) erts_atomic_read_nob(&bits_bufs_size);
 }
 
-#if !defined(ERTS_SMP)
-static
-#endif
 void
 erts_bits_init_state(ERL_BITS_PROTO_0)
 {
@@ -88,13 +77,11 @@ erts_bits_init_state(ERL_BITS_PROTO_0)
     erts_bin_offset = 0;
 }
 
-#if defined(ERTS_SMP)
 void
 erts_bits_destroy_state(ERL_BITS_PROTO_0)
 {
     erts_free(ERTS_ALC_T_BITS_BUF, byte_buf);
 }
-#endif
 
 void
 erts_init_bits(void)
@@ -104,13 +91,8 @@ erts_init_bits(void)
     ERTS_CT_ASSERT(offsetof(ErtsBinary,driver.binary.orig_bytes)
                 == offsetof(Binary,orig_bytes));
 
-    erts_smp_atomic_init_nob(&bits_bufs_size, 0);
-#if defined(ERTS_SMP)
+    erts_atomic_init_nob(&bits_bufs_size, 0);
     /* erl_process.c calls erts_bits_init_state() on all state instances */
-#else
-    ERL_BITS_DECLARE_STATEP;
-    erts_bits_init_state(ERL_BITS_ARGS_0);
-#endif
 }
 
 /*****************************************************************
@@ -160,6 +142,42 @@ erts_bs_start_match_2(Process *p, Eterm Binary, Uint Max)
     (ms->mb).offset = ms->save_offset[0] = 8 * offs + bitoffs;
     (ms->mb).size = total_bin_size * 8 + (ms->mb).offset + bitsize;
     return make_matchstate(ms);
+}
+
+ErlBinMatchState *erts_bs_start_match_3(Process *p, Eterm Binary)
+{
+    Eterm Orig;
+    Uint offs;
+    Uint* hp;
+    Uint NeededSize;
+    ErlBinMatchState *ms;
+    Uint bitoffs;
+    Uint bitsize;
+    Uint total_bin_size;
+    ProcBin* pb;
+
+    ASSERT(is_binary(Binary));
+    total_bin_size = binary_size(Binary);
+    if ((total_bin_size >> (8*sizeof(Uint)-3)) != 0) {
+        return NULL;
+    }
+
+    NeededSize = ERL_BIN_MATCHSTATE_SIZE(0);
+    hp = HeapOnlyAlloc(p, NeededSize);
+    ms = (ErlBinMatchState *) hp;
+    ERTS_GET_REAL_BIN(Binary, Orig, offs, bitoffs, bitsize);
+    pb = (ProcBin *) boxed_val(Orig);
+    if (pb->thing_word == HEADER_PROC_BIN && pb->flags != 0) {
+        erts_emasculate_writable_binary(pb);
+    }
+
+    ms->thing_word = HEADER_BIN_MATCHSTATE(0);
+    (ms->mb).orig = Orig;
+    (ms->mb).base = binary_bytes(Orig);
+    (ms->mb).offset = 8 * offs + bitoffs;
+    (ms->mb).size = total_bin_size * 8 + (ms->mb).offset + bitsize;
+
+    return ms;
 }
 
 #ifdef DEBUG
@@ -744,7 +762,7 @@ static void
 ERTS_INLINE need_byte_buf(ERL_BITS_PROTO_1(int need))
 {
     if (byte_buf_len < need) {
-	erts_smp_atomic_add_nob(&bits_bufs_size, need - byte_buf_len);
+	erts_atomic_add_nob(&bits_bufs_size, need - byte_buf_len);
 	byte_buf_len = need;
 	byte_buf = erts_realloc(ERTS_ALC_T_BITS_BUF, byte_buf, byte_buf_len);
     }
@@ -1313,6 +1331,14 @@ erts_bs_append(Process* c_p, Eterm* reg, Uint live, Eterm build_size_term,
 	}
     }
 
+    if (build_size_in_bits == 0) {
+        if (c_p->stop - c_p->htop < extra_words) {
+            (void) erts_garbage_collect(c_p, extra_words, reg, live+1);
+            bin = reg[live];
+        }
+	return bin;
+    }
+
     if((ERTS_UINT_MAX - build_size_in_bits) < erts_bin_offset) {
         c_p->freason = SYSTEM_LIMIT;
         return THE_NON_VALUE;
@@ -1370,13 +1396,13 @@ erts_bs_append(Process* c_p, Eterm* reg, Uint live, Eterm build_size_term,
 	Uint bitsize;
 	Eterm* hp;
 
-	/*
+        /*
 	 * Allocate heap space.
 	 */
 	heap_need = PROC_BIN_SIZE + ERL_SUB_BIN_SIZE + extra_words;
 	if (c_p->stop - c_p->htop < heap_need) {
 	    (void) erts_garbage_collect(c_p, heap_need, reg, live+1);
-	    bin = reg[live];
+            bin = reg[live];
 	}
 	hp = c_p->htop;
 
@@ -1392,6 +1418,10 @@ erts_bs_append(Process* c_p, Eterm* reg, Uint live, Eterm build_size_term,
 		(erts_bin_offset % unit) != 0) {
 		goto badarg;
 	    }
+	}
+
+	if (build_size_in_bits == 0) {
+            return bin;
 	}
 
         if((ERTS_UINT_MAX - build_size_in_bits) < erts_bin_offset) {

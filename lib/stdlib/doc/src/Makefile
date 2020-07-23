@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2017. All Rights Reserved.
+# Copyright Ericsson AB 1997-2018. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,7 +71,6 @@ XML_REF3_FILES = \
 	gen_statem.xml \
 	io.xml \
 	io_lib.xml \
-	lib.xml \
 	lists.xml \
 	log_mf_h.xml \
 	maps.xml \
@@ -98,6 +97,7 @@ XML_REF3_FILES = \
 	sys.xml \
 	timer.xml \
 	unicode.xml \
+	uri_string.xml \
 	win32reg.xml \
 	zip.xml
 
@@ -155,6 +155,7 @@ debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(MAN6DIR)/*
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
@@ -162,7 +163,7 @@ clean clean_docs:
 	rm -f errs core *~
 
 $(SPECDIR)/specs_erl_id_trans.xml:
-	escript $(SPECS_EXTRACTOR) $(SPECS_FLAGS) \
+	$(gen_verbose)escript $(SPECS_EXTRACTOR) $(SPECS_FLAGS) \
 		-o$(dir $@) -module erl_id_trans
 
 # ----------------------------------------------------

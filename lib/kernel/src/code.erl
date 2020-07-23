@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -149,8 +149,11 @@ load_file(Mod) when is_atom(Mod) ->
 -spec ensure_loaded(Module) -> {module, Module} | {error, What} when
       Module :: module(),
       What :: embedded | badfile | nofile | on_load_failure.
-ensure_loaded(Mod) when is_atom(Mod) -> 
-    call({ensure_loaded,Mod}).
+ensure_loaded(Mod) when is_atom(Mod) ->
+    case erlang:module_loaded(Mod) of
+        true -> {module, Mod};
+        false -> call({ensure_loaded,Mod})
+    end.
 
 %% XXX File as an atom is allowed only for backwards compatibility.
 -spec load_abs(Filename) -> load_ret() when
@@ -627,7 +630,7 @@ do_par_recv(N, Good, Bad) ->
 call(Req) ->
     code_server:call(Req).
 
--spec start_link() -> {'ok', pid()} | {'error', 'crash'}.
+-spec start_link() -> {'ok', pid()}.
 start_link() ->
     do_start().
     

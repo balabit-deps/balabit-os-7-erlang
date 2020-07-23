@@ -236,9 +236,10 @@ load_common(Mod, Bin, Beam, Architecture) ->
 	  lists:foreach(fun({FE, DestAddress}) ->
 			    hipe_bifs:set_native_address_in_fe(FE, DestAddress)
 			end, erase(closures_to_patch)),
-          ok = hipe_bifs:commit_patch_load(LoaderState),
 	  set_beam_call_traps(FunDefs),
-	  ok;
+	  export_funs(FunDefs),
+          ok = hipe_bifs:commit_patch_load(LoaderState),
+          ok;
 	BeamBinary when is_binary(BeamBinary) ->
 	  %% Find all closures in the code.
 	  [] = erase(closures_to_patch),	%Clean up, assertion.
@@ -274,6 +275,7 @@ needs_trampolines(Architecture) ->
     arm -> true;
     powerpc -> true;
     ppc64 -> true;
+    amd64 -> true;
     _ -> false
   end.
 
@@ -451,7 +453,7 @@ make_beam_stub(Mod, LoaderState, MD5, Beam, FunDefs, ClosuresToPatch) ->
 %%========================================================================
 %% Patching 
 %%  @spec patch(refs(), BaseAddress::integer(), ConstAndZone::term(),
-%%              FunDefs::term(), TrampolineMap::term()) -> 'ok'.
+%%              FunDefs::term(), TrampolineMap::term()) -> 'ok'
 %%   @type refs()=[{RefType::integer(), Reflist::reflist()} | refs()]
 %%
 %%   @type reflist()=   [{Data::term(), Offsets::offests()}|reflist()]

@@ -2,7 +2,7 @@
 # 
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 1997-2016. All Rights Reserved.
+# Copyright Ericsson AB 1997-2018. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -68,10 +68,6 @@ WIND_BASE=${WIND_BASE:=`ypmatch tornado passwd | awk -F: '{print $6}'`/$VXTOP}
 # These are created by autoconf.
 MKDIRS="${ERL_TOP}/lib/os_mon/priv/bin/$target
         ${ERL_TOP}/lib/os_mon/priv/obj/$target
-        ${ERL_TOP}/lib/orber/priv/obj/$target
-        ${ERL_TOP}/lib/orber/priv/bin/$target
-        ${ERL_TOP}/lib/ic/priv/lib/$target
-        ${ERL_TOP}/lib/ic/priv/obj/$target
         ${ERL_TOP}/lib/asn1/priv/lib/$target
         ${ERL_TOP}/lib/asn1/priv/obj/$target
         ${ERL_TOP}/lib/erl_interface/obj/$target
@@ -97,11 +93,10 @@ erts_lib_src=${ERL_TOP}/erts/lib_src
 erts_incl=${ERL_TOP}/erts/include
 erts_incl_intrnl=${ERL_TOP}/erts/include/internal
 etcdir=${ERL_TOP}/erts/etc/common
+erlint_incl_dir=${ERL_TOP}/lib/erl_interface/include
 erlint_dir=${ERL_TOP}/lib/erl_interface/src
 epmd_dir=${ERL_TOP}/erts/epmd/src
 os_mon_dir=${ERL_TOP}/lib/os_mon/c_src
-orber_dir=${ERL_TOP}/lib/orber/c_src
-ic_dir=${ERL_TOP}/lib/ic/c_src
 internal_tools_dir=${ERL_TOP}
 libdir=${ERL_TOP}/lib
 tsdir=$libdir/test_server/src
@@ -115,16 +110,16 @@ CONFIG_FILES="${ERL_TOP}/erts/emulator/$host/Makefile
 	    $erts_incl_intrnl/$host/ethread.mk
 	    $erts_incl_intrnl/$host/ethread_header_config.h
 	    $etcdir/$host/Makefile
+	    $erlint_incl_dir/$host/ei_config.h
 	    $erlint_dir/$host/Makefile
 	    $erlint_dir/$host/eidefs.mk
 	    $epmd_dir/$host/Makefile
 	    $internal_tools_dir/make/$host/otp.mk
+	    $internal_tools_dir/make/$host/otp_ded.mk
 	    $os_mon_dir/$host/Makefile
 	    $zlibdir/$host/Makefile
-	    $ic_dir/$host/Makefile
 	    $runtime_tools_dir/$host/Makefile
-	    $tools_dir/$host/Makefile
-	    $orber_dir/$host/Makefile"
+	    $tools_dir/$host/Makefile"
 
 for file in $CONFIG_FILES; do
     new_name=`echo $file|sed "s%/$host/%/$target/%"`
@@ -140,6 +135,7 @@ for file in $CONFIG_FILES; do
 	-e "s,@HOST_TYPE@,$HOST_TYPE,g" \
 	-e "s,@WIND_BASE@,$WIND_BASE,g" \
 	-e "s,@TARGET@,$target,g" \
+        -e "s,@ENV_CFLAGS@,$CFLAGS,g" \
 	$in_file > $new_name
 done
 

@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2015. All Rights Reserved.
+# Copyright Ericsson AB 1997-2018. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,13 +43,10 @@ XML_CHAPTER_FILES = \
 	inets_services.xml \
 	http_client.xml \
 	http_server.xml \
-	ftp_client.xml \
 	notes.xml
 
 XML_REF3_FILES = \
 	inets.xml \
-	ftp.xml \
-	tftp.xml \
 	http_uri.xml\
 	httpc.xml\
 	httpd.xml \
@@ -118,6 +115,7 @@ pdf: $(TOP_PDF_FILE)
 html: gifs $(HTML_REF_MAN_FILE)
 
 clean clean_docs: clean_html clean_man clean_pdf
+	rm -rf $(XMLDIR)
 	rm -f errs core *~
 
 man: $(MAN3_FILES)

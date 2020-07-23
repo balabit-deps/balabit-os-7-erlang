@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2006-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@
 -export([schedulers_alive/1, node_container_refc_check/1,
 	 long_timers/1, pollset_size/1,
 	 check_io_debug/1, get_check_io_info/0,
+         lc_graph/1,
          leaked_processes/1]).
 
 suite() ->
@@ -46,6 +47,7 @@ suite() ->
 all() -> 
     [schedulers_alive, node_container_refc_check,
      long_timers, pollset_size, check_io_debug,
+     lc_graph,
      %% Make sure that the leaked_processes/1 is always
      %% run last.
      leaked_processes].
@@ -249,7 +251,7 @@ pollset_size(Config) when is_list(Config) ->
 	  end.
 
 check_io_debug(Config) when is_list(Config) ->
-    case lists:keysearch(name, 1, erlang:system_info(check_io)) of
+    case lists:keysearch(name, 1, hd(erlang:system_info(check_io))) of
 	      {value, {name, erts_poll}} -> check_io_debug_test();
 	      _ -> {skipped, "Not implemented in this emulator"}
 	  end.
@@ -288,6 +290,12 @@ has_gethost([P|T]) ->
     end;
 has_gethost([]) ->
     false.
+
+lc_graph(Config) when is_list(Config) ->
+    %% Create "lc_graph" file in current working dir
+    %% if lock checker is enabled
+    erts_debug:lc_graph(),
+    ok.
 
 leaked_processes(Config) when is_list(Config) ->
     %% Replace the defualt timetrap with a timetrap with
@@ -330,7 +338,7 @@ display_check_io(ChkIo) ->
     ok.
 
 get_check_io_info() ->
-    ChkIo = erlang:system_info(check_io),
+    ChkIo = driver_SUITE:get_check_io_total(erlang:system_info(check_io)),
     PendUpdNo = case lists:keysearch(pending_updates, 1, ChkIo) of
 		    {value, {pending_updates, PendNo}} ->
 			PendNo;

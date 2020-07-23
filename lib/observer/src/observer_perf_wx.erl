@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -86,8 +86,8 @@ init([Notebook, Parent, Config]) ->
                                  secs=maps:get(secs, Config, ?DISP_SECONDS)}
 		       },
 	{Panel, State0}
-    catch _:Err ->
-	    io:format("~p crashed ~tp: ~tp~n",[?MODULE, Err, erlang:get_stacktrace()]),
+    catch _:Err:Stacktrace ->
+	    io:format("~p crashed ~tp: ~tp~n",[?MODULE, Err, Stacktrace]),
 	    {stop, Err}
     end.
 
@@ -110,25 +110,26 @@ setup_graph_drawing(Panels) ->
     _ = [Do(Panel) || Panel <- Panels],
     UseGC = haveGC(),
     Version28 = ?wxMAJOR_VERSION =:= 2 andalso ?wxMINOR_VERSION =:= 8,
+    Scale = observer_wx:get_scale(),
     {Font, SmallFont}
 	= if UseGC, Version28 ->
 		  %% Def font is really small when using Graphics contexts in 2.8
 		  %% Hardcode it
-		  F = wxFont:new(12,?wxFONTFAMILY_DECORATIVE,?wxFONTSTYLE_NORMAL,?wxFONTWEIGHT_BOLD),
-		  SF = wxFont:new(10, ?wxFONTFAMILY_DECORATIVE, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_NORMAL),
+		  F = wxFont:new(Scale * 12,?wxFONTFAMILY_DECORATIVE,?wxFONTSTYLE_NORMAL,?wxFONTWEIGHT_BOLD),
+		  SF = wxFont:new(Scale * 10, ?wxFONTFAMILY_DECORATIVE, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_NORMAL),
 		  {F, SF};
 	     true ->
 		  DefFont = wxSystemSettings:getFont(?wxSYS_DEFAULT_GUI_FONT),
 		  DefSize = wxFont:getPointSize(DefFont),
 		  DefFamily = wxFont:getFamily(DefFont),
-		  F = wxFont:new(DefSize-1, DefFamily, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_BOLD),
-		  SF = wxFont:new(DefSize-2, DefFamily, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_NORMAL),
+		  F = wxFont:new(Scale * (DefSize-1), DefFamily, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_BOLD),
+		  SF = wxFont:new(Scale * (DefSize-2), DefFamily, ?wxFONTSTYLE_NORMAL, ?wxFONTWEIGHT_NORMAL),
 		  {F, SF}
 	  end,
-    BlackPen = wxPen:new({0,0,0}, [{width, 1}]),
-    Pens = [wxPen:new(Col, [{width, 1}, {style, ?wxSOLID}])
+    BlackPen = wxPen:new({0,0,0}, [{width, Scale}]),
+    Pens = [wxPen:new(Col, [{width, Scale}, {style, ?wxSOLID}])
             || Col <- tuple_to_list(colors())],
-    DotPens = [wxPen:new(Col, [{width, 1}, {style, ?wxDOT}])
+    DotPens = [wxPen:new(Col, [{width, Scale}, {style, ?wxDOT}])
                || Col <- tuple_to_list(colors())],
     #paint{usegc = UseGC,
 	   font  = Font,

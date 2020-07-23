@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1998-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -924,8 +924,7 @@ expr({dbg,Line,raise,As0}, Bs0, #ieval{level=Le}=Ieval0) ->
 	trace(return, {Le,Error}),
 	{value,Error,Bs}
     catch
-	_:_ ->
-	    Stk = erlang:get_stacktrace(),	%Possibly truncated.
+	_:_:Stk ->                              %Possibly truncated.
 	    StkFun = fun(_) -> Stk end,
 	    do_exception(Class, Reason, StkFun, Bs, Ieval)
     end;
@@ -1034,7 +1033,7 @@ expr({send,Line,To0,Msg0}, Bs0, Ieval0) ->
 
 %% Binary
 expr({bin,Line,Fs}, Bs0, Ieval0) ->
-    Ieval = Ieval0#ieval{line=Line},
+    Ieval = Ieval0#ieval{line=Line,top=false},
     try
 	eval_bits:expr_grp(Fs, Bs0,
 			   fun (E, B) -> expr(E, B, Ieval) end,

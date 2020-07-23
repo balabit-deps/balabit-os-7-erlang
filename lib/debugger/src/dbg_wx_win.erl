@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -275,7 +275,7 @@ entry(Parent, Title, Prompt, {Type, Value}) ->
 verify(Type, Str) ->
     case erl_scan:string(Str, 1, [text]) of
 	{ok, Tokens, _EndLine} when Type==term ->
-	    case lib:extended_parse_term(Tokens++[{dot, erl_anno:new(1)}]) of
+	    case erl_eval:extended_parse_term(Tokens++[{dot, erl_anno:new(1)}]) of
 		{ok, Value} -> {edit, Value};
 		_Error -> 
 		    ignore

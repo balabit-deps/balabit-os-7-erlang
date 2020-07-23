@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2004-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
 	 init_per_group/2,end_per_group/2,
 	 init_per_testcase/2,end_per_testcase/2,
+         verify_highest_opcode/1,
 	 two/1,test1/1,fail/1,float_bin/1,in_guard/1,in_catch/1,
 	 nasty_literals/1,coerce_to_float/1,side_effect/1,
 	 opt/1,otp_7556/1,float_arith/1,otp_8054/1,
@@ -38,18 +39,19 @@ suite() ->
     [{ct_hooks,[ts_install_cth]},
      {timetrap,{minutes,1}}].
 
-all() -> 
-    test_lib:recompile(?MODULE),
+all() ->
     [{group,p}].
 
-groups() -> 
+groups() ->
     [{p,[parallel],
-      [two,test1,fail,float_bin,in_guard,in_catch,
+      [verify_highest_opcode,
+       two,test1,fail,float_bin,in_guard,in_catch,
        nasty_literals,side_effect,opt,otp_7556,float_arith,
        otp_8054,cover]}].
 
 
 init_per_suite(Config) ->
+    test_lib:recompile(?MODULE),
     Config.
 
 end_per_suite(_Config) ->
@@ -67,6 +69,20 @@ init_per_testcase(Case, Config) when is_atom(Case), is_list(Config) ->
 
 end_per_testcase(Case, Config) when is_atom(Case), is_list(Config) ->
     ok.
+
+verify_highest_opcode(_Config) ->
+    case ?MODULE of
+        bs_construct_r21_SUITE ->
+            {ok,Beam} = file:read_file(code:which(?MODULE)),
+            case test_lib:highest_opcode(Beam) of
+                Highest when Highest =< 163 ->
+                    ok;
+                TooHigh ->
+                    ct:fail({too_high_opcode_for_21,TooHigh})
+            end;
+        _ ->
+            ok
+    end.
 
 two(Config) when is_list(Config) ->
     <<0,1,2,3,4,6,7,8,9>> = two_1([0], [<<1,2,3,4>>,<<6,7,8,9>>]),
@@ -153,6 +169,8 @@ l(I_13, I_big1, I_16, Bin) ->
 	[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
 	 16#77,16#FF,16#FF,16#FF,16#FF,16#FF,16#FF,16#FF,16#FF,16#FF,16#FF,
 	 16#FF,16#FF,16#FF,16#FF,16#FF,16#FF]),
+     ?T(<< (<<"abc",7:3>>):3/binary >>,
+        [$a,$b,$c]),
 
      %% Mix different units.
      ?T(<<37558955:(I_16-12)/unit:8,1:1>>,
@@ -303,7 +321,17 @@ fail(Config) when is_list(Config) ->
     {'EXIT',{badarg,_}} = (catch <<42.0/integer>>),
     {'EXIT',{badarg,_}} = (catch <<42/binary>>),
     {'EXIT',{badarg,_}} = (catch <<an_atom/integer>>),
-    
+
+    %% Bad literal sizes
+    Bin = i(<<>>),
+    {'EXIT',{badarg,_}} = (catch <<0:(-1)>>),
+    {'EXIT',{badarg,_}} = (catch <<Bin/binary,0:(-1)>>),
+    {'EXIT',{badarg,_}} = (catch <<0:(-(1 bsl 100))>>),
+    {'EXIT',{badarg,_}} = (catch <<Bin/binary,0:(-(1 bsl 100))>>),
+
+    %% Unaligned sizes with literal binaries.
+    {'EXIT',{badarg,_}} = (catch <<0,(<<7777:17>>)/binary>>),
+
     ok.
 
 float_bin(Config) when is_list(Config) ->

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -94,6 +94,10 @@ handle_call(Msg, _From, State) ->
 handle_cast(Msg, State) ->
     io:format("~p~p: Unhandled cast ~tp~n",[?MODULE, ?LINE, Msg]),
     {noreply, State}.
+
+handle_event(#wx{obj=MoreEntry,event=#wxMouse{type=left_down},userData={more,More}}, State) ->
+    observer_lib:add_scroll_entries(MoreEntry,More),
+    {noreply, State};
 
 handle_event(#wx{event=#wxMouse{type=left_down},userData=Target}, State) ->
     cdv_virtual_list_wx:start_detail_win(Target),

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -121,10 +121,11 @@ init(Parent) ->
     proc_lib:init_ack(Parent, {ok, self()}),
     doit_loop(#state{supervisor = Parent}).
 
+%% Local function in order to avoid external function call
 val(Var) ->
-    case ?catch_val(Var) of
-	{'EXIT', _} -> mnesia_lib:other_val(Var);
-	_VaLuE_ -> _VaLuE_
+    case ?catch_val_and_stack(Var) of
+	{'EXIT', Stacktrace} -> mnesia_lib:other_val(Var, Stacktrace);
+	Value -> Value
     end.
 
 reply({From,Ref}, R) ->
@@ -597,9 +598,9 @@ recover_coordinator(Tid, Etabs) ->
 		false ->  %% When killed before store havn't been copied to
 		    ok    %% to the new nested trans store.
 	    end
-    catch _:Reason ->
+    catch _:Reason:Stacktrace ->
 	    dbg_out("Recovery of coordinator ~p failed: ~tp~n",
-		    [Tid, {Reason, erlang:get_stacktrace()}]),
+		    [Tid, {Reason, Stacktrace}]),
 	    Protocol = asym_trans,
 	    tell_outcome(Tid, Protocol, node(), CheckNodes, TellNodes)
     end,
@@ -742,8 +743,9 @@ non_transaction(OldState, Fun, Args, ActivityKind, Mod) ->
 	{aborted, Reason} -> mnesia:abort(Reason);
 	Res -> Res
     catch
-	throw:Throw -> throw(Throw);
-	_:Reason    -> exit(Reason)
+        throw:Throw     -> throw(Throw);
+        error:Reason:ST -> exit({Reason, ST});
+        exit:Reason     -> exit(Reason)
     after
 	case OldState of
 	    undefined -> erase(mnesia_activity_state);
@@ -825,8 +827,7 @@ execute_transaction(Fun, Args, Factor, Retries, Type) ->
     catch throw:Value ->  %% User called throw
 	    Reason = {aborted, {throw, Value}},
 	    return_abort(Fun, Args, Reason);
-	  error:Reason ->
-	    ST = erlang:get_stacktrace(),
+	  error:Reason:ST ->
 	    check_exit(Fun, Args, Factor, Retries, {Reason,ST}, Type);
 	  _:Reason ->
 	    check_exit(Fun, Args, Factor, Retries, Reason, Type)
@@ -1661,7 +1662,7 @@ commit_participant(Coord, Tid, Bin, C0, DiscNs, _RamNs) ->
     ?eval_debug_fun({?MODULE, commit_participant, pre}, [{tid, Tid}]),
     try mnesia_schema:prepare_commit(Tid, C0, {part, Coord}) of
 	{Modified, C = #commit{}, DumperMode} ->
-	    %% If we can not find any local unclear decision
+	    %% If we cannot find any local unclear decision
 	    %% we should presume abort at startup recovery
 	    case lists:member(node(), DiscNs) of
 		false ->
@@ -1796,14 +1797,13 @@ do_update(Tid, Storage, [Op | Ops], OldRes) ->
     try do_update_op(Tid, Storage, Op) of
 	ok ->     do_update(Tid, Storage, Ops, OldRes);
 	NewRes -> do_update(Tid, Storage, Ops, NewRes)
-    catch _:Reason ->
+    catch _:Reason:ST ->
 	    %% This may only happen when we recently have
 	    %% deleted our local replica, changed storage_type
 	    %% or transformed table
 	    %% BUGBUG: Updates may be lost if storage_type is changed.
 	    %%         Determine actual storage type and try again.
 	    %% BUGBUG: Updates may be lost if table is transformed.
-	    ST = erlang:get_stacktrace(),
 	    verbose("do_update in ~w failed: ~tp -> {'EXIT', ~tp}~n",
 		    [Tid, Op, {Reason, ST}]),
 	    do_update(Tid, Storage, Ops, OldRes)
@@ -1914,11 +1914,10 @@ commit_clear([H|R], Tid, Storage, Tab, K, Obj)
 do_snmp(_, []) ->   ok;
 do_snmp(Tid, [Head|Tail]) ->
     try mnesia_snmp_hook:update(Head)
-    catch _:Reason ->
+    catch _:Reason:ST ->
 	    %% This should only happen when we recently have
 	    %% deleted our local replica or recently deattached
 	    %% the snmp table
-	    ST = erlang:get_stacktrace(),
 	    verbose("do_snmp in ~w failed: ~tp -> {'EXIT', ~tp}~n",
 		    [Tid, Head, {Reason, ST}])
     end,
@@ -2212,7 +2211,7 @@ display_pid_info(Pid) ->
 			   Other
 		   end,
 	    Reds  = fetch(reductions, Info),
-	    LM = length(fetch(messages, Info)),
+	    LM = fetch(message_queue_len, Info),
 	    pformat(io_lib:format("~p", [Pid]),
 		    io_lib:format("~tp", [Call]),
 		    io_lib:format("~tp", [Curr]), Reds, LM)

@@ -102,6 +102,8 @@
                                       | 'undefined', % race
                 fun_homes            :: dict:dict(label(), mfa())
                                       | 'undefined', % race
+                reachable_funs       :: sets:set(label())
+                                      | 'undefined', % race
 		plt		     :: dialyzer_plt:plt()
                                       | 'undefined', % race
 		opaques              :: [type()]
@@ -269,9 +271,11 @@ traverse(Tree, Map, State) ->
       case state__warning_mode(State) of
         true -> {State, Map, Type};
         false ->
-          State2 = state__add_work(get_label(Tree), State),
+          FunLbl = get_label(Tree),
+          State2 = state__add_work(FunLbl, State),
           State3 = state__update_fun_env(Tree, Map, State2),
-          {State3, Map, Type}
+          State4 = state__add_reachable(FunLbl, State3),
+          {State4, Map, Type}
       end;
     'let' ->
       handle_let(Tree, Map, State);
@@ -299,6 +303,7 @@ traverse(Tree, Map, State) ->
 	  match_fail -> t_none();
 	  raise -> t_none();
 	  bs_init_writable -> t_from_term(<<>>);
+          build_stacktrace -> erl_bif_types:type(erlang, build_stacktrace, 0);
 	  Other -> erlang:error({'Unsupported primop', Other})
 	end,
       {State, Map, Type};
@@ -400,8 +405,13 @@ handle_apply(Tree, Map, State) ->
                                     t_fun_args(OpType1, 'universe')),
 	      case any_none(NewArgs) of
 		true ->
+                  EnumNewArgs = lists:zip(lists:seq(1, length(NewArgs)),
+                                          NewArgs),
+                  ArgNs = [Arg ||
+                            {Arg, Type} <- EnumNewArgs, t_is_none(Type)],
 		  Msg = {fun_app_args,
-			 [format_args(Args, ArgTypes, State),
+			 [ArgNs,
+			  format_args(Args, ArgTypes, State),
 			  format_type(OpType, State)]},
 		  State3 = state__add_warning(State2, ?WARN_FAILING_CALL,
 					      Tree, Msg),
@@ -1233,6 +1243,13 @@ handle_tuple(Tree, Map, State) ->
                                     format_type(ErrorType, State1),
                                   OpaqueStr, OpaqueStr]},
                           State2 = state__add_warning(State1, ?WARN_OPAQUE,
+                                                      Tree, Msg),
+                          {State2, Map1, t_none()};
+                        {error, record, ErrorPat, ErrorType, _} ->
+                          Msg = {record_match,
+                                 [format_patterns(ErrorPat),
+                                  format_type(ErrorType, State1)]},
+                          State2 = state__add_warning(State1, ?WARN_MATCHING,
                                                       Tree, Msg),
                           {State2, Map1, t_none()};
                         {Map2, ETypes} ->
@@ -3031,25 +3048,35 @@ state__new(Callgraph, Codeserver, Tree, Plt, Module, Records) ->
   {TreeMap, FunHomes} = build_tree_map(Tree, Callgraph),
   Funs = dict:fetch_keys(TreeMap),
   FunTab = init_fun_tab(Funs, dict:new(), TreeMap, Callgraph, Plt),
-  ExportedFuns =
-    [Fun || Fun <- Funs--[top], dialyzer_callgraph:is_escaping(Fun, Callgraph)],
-  Work = init_work(ExportedFuns),
+  ExportedFunctions =
+    [Fun ||
+      Fun <- Funs--[top],
+      dialyzer_callgraph:is_escaping(Fun, Callgraph),
+      dialyzer_callgraph:lookup_name(Fun, Callgraph) =/= error
+    ],
+  Work = init_work(ExportedFunctions),
   Env = lists:foldl(fun(Fun, Env) -> dict:store(Fun, map__new(), Env) end,
 		    dict:new(), Funs),
   #state{callgraph = Callgraph, codeserver = Codeserver,
          envs = Env, fun_tab = FunTab, fun_homes = FunHomes, opaques = Opaques,
 	 plt = Plt, races = dialyzer_races:new(), records = Records,
 	 warning_mode = false, warnings = [], work = Work, tree_map = TreeMap,
-	 module = Module}.
+	 module = Module, reachable_funs = sets:new()}.
 
 state__warning_mode(#state{warning_mode = WM}) ->
   WM.
 
 state__set_warning_mode(#state{tree_map = TreeMap, fun_tab = FunTab,
-                               races = Races} = State) ->
+                               races = Races, callgraph = Callgraph,
+                               reachable_funs = ReachableFuns} = State) ->
   ?debug("==========\nStarting warning pass\n==========\n", []),
   Funs = dict:fetch_keys(TreeMap),
-  State#state{work = init_work([top|Funs--[top]]),
+  Work =
+    [Fun ||
+      Fun <- Funs--[top],
+      dialyzer_callgraph:lookup_name(Fun, Callgraph) =/= error orelse
+        sets:is_element(Fun, ReachableFuns)],
+  State#state{work = init_work(Work),
 	      fun_tab = FunTab, warning_mode = true,
               races = dialyzer_races:put_race_analysis(true, Races)}.
 
@@ -3116,7 +3143,10 @@ state__add_warning(#state{warnings = Warnings, warning_mode = true} = State,
 state__remove_added_warnings(OldState, NewState) ->
   #state{warnings = OldWarnings} = OldState,
   #state{warnings = NewWarnings} = NewState,
-  {NewWarnings -- OldWarnings, NewState#state{warnings = OldWarnings}}.
+  case NewWarnings =:= OldWarnings of
+    true -> {[], NewState};
+    false -> {NewWarnings -- OldWarnings, NewState#state{warnings = OldWarnings}}
+  end.
 
 state__add_warnings(Warns, #state{warnings = Warnings} = State) ->
   State#state{warnings = Warns ++ Warnings}.
@@ -3138,7 +3168,8 @@ state__get_race_warnings(#state{races = Races} = State) ->
   State1#state{races = Races1}.
 
 state__get_warnings(#state{tree_map = TreeMap, fun_tab = FunTab,
-			   callgraph = Callgraph, plt = Plt} = State) ->
+			   callgraph = Callgraph, plt = Plt,
+                           reachable_funs = ReachableFuns} = State) ->
   FoldFun =
     fun({top, _}, AccState) -> AccState;
        ({FunLbl, Fun}, AccState) ->
@@ -3173,7 +3204,12 @@ state__get_warnings(#state{tree_map = TreeMap, fun_tab = FunTab,
 		      GenRet = dialyzer_contracts:get_contract_return(C),
 		      not t_is_unit(GenRet)
 		  end,
-		case Warn of
+                %% Do not output warnings for unreachable funs.
+		case
+                  Warn andalso
+                  (dialyzer_callgraph:lookup_name(FunLbl, Callgraph) =/= error
+                   orelse sets:is_element(FunLbl, ReachableFuns))
+                of
 		  true ->
 		    case classify_returns(Fun) of
 		      no_match ->
@@ -3243,6 +3279,10 @@ state__get_args_and_status(Tree, #state{fun_tab = FunTab}) ->
     {ok, {not_handled, {ArgTypes, _}}} -> {ArgTypes, false};
     {ok, {ArgTypes, _}} -> {ArgTypes, true}
   end.
+
+state__add_reachable(FunLbl, #state{reachable_funs = ReachableFuns}=State) ->
+  NewReachableFuns = sets:add_element(FunLbl, ReachableFuns),
+  State#state{reachable_funs = NewReachableFuns}.
 
 build_tree_map(Tree, Callgraph) ->
   Fun =
@@ -3433,19 +3473,19 @@ state__fun_info(Fun, #state{callgraph = CG, fun_tab = FunTab, plt = PLT}) ->
   {Fun, Sig, Contract, LocalRet}.
 
 forward_args(Fun, ArgTypes, #state{work = Work, fun_tab = FunTab} = State) ->
-  {OldArgTypes, OldOut, Fixpoint} =
+  {NewArgTypes, OldOut, Fixpoint} =
     case dict:find(Fun, FunTab) of
-      {ok, {not_handled, {OldArgTypes0, OldOut0}}} ->
-	{OldArgTypes0, OldOut0, false};
+      {ok, {not_handled, {_OldArgTypesAreNone, OldOut0}}} ->
+	{ArgTypes, OldOut0, false};
       {ok, {OldArgTypes0, OldOut0}} ->
-	{OldArgTypes0, OldOut0,
-	 t_is_subtype(t_product(ArgTypes), t_product(OldArgTypes0))}
+        NewArgTypes0 = [t_sup(X, Y) ||
+                         {X, Y} <- lists:zip(ArgTypes, OldArgTypes0)],
+	{NewArgTypes0, OldOut0,
+         t_is_equal(t_product(NewArgTypes0), t_product(OldArgTypes0))}
     end,
   case Fixpoint of
     true -> State;
     false ->
-      NewArgTypes = [t_sup(X, Y) ||
-                      {X, Y} <- lists:zip(ArgTypes, OldArgTypes)],
       NewWork = add_work(Fun, Work),
       ?debug("~tw: forwarding args ~ts\n",
 	     [state__lookup_name(Fun, State),
@@ -3604,14 +3644,15 @@ format_args(ArgList0, TypeList, State) ->
   "(" ++ format_args_1(ArgList, TypeList, State) ++ ")".
 
 format_args_1([Arg], [Type], State) ->
-  format_arg(Arg) ++ format_type(Type, State);
+  format_arg_1(Arg, Type, State);
 format_args_1([Arg|Args], [Type|Types], State) ->
-  String =
-    case cerl:is_literal(Arg) of
-      true -> format_cerl(Arg);
-      false -> format_arg(Arg) ++ format_type(Type, State)
-    end,
-  String ++ "," ++ format_args_1(Args, Types, State).
+  format_arg_1(Arg, Type, State) ++ "," ++ format_args_1(Args, Types, State).
+
+format_arg_1(Arg, Type, State) ->
+  case cerl:is_literal(Arg) of
+    true -> format_cerl(Arg);
+    false -> format_arg(Arg) ++ format_type(Type, State)
+  end.
 
 format_arg(Arg) ->
   Default = "",

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@
 	 start/3, start/4, start/5, start_link/3, start_link/4, start_link/5,
 	 hibernate/3,
 	 init_ack/1, init_ack/2,
-	 init_p/3,init_p/5,format/1,format/2,format/3,
+	 init_p/3,init_p/5,format/1,format/2,format/3,report_cb/2,
 	 initial_call/1,
          translate_initial_call/1,
 	 stop/1, stop/3]).
@@ -39,6 +39,8 @@
 -export([wake_up/3]).
 
 -export_type([spawn_option/0]).
+
+-include("logger.hrl").
 
 %%-----------------------------------------------------------------------------
 
@@ -231,8 +233,8 @@ init_p(Parent, Ancestors, Fun) when is_function(Fun) ->
     try
 	Fun()
     catch
-	Class:Reason ->
-	    exit_p(Class, Reason, erlang:get_stacktrace())
+	Class:Reason:Stacktrace ->
+	    exit_p(Class, Reason, Stacktrace)
     end.
 
 -spec init_p(pid(), [pid()], atom(), atom(), [term()]) -> term().
@@ -246,8 +248,8 @@ init_p_do_apply(M, F, A) ->
     try
 	apply(M, F, A) 
     catch
-	Class:Reason ->
-	    exit_p(Class, Reason, erlang:get_stacktrace())
+	Class:Reason:Stacktrace ->
+	    exit_p(Class, Reason, Stacktrace)
     end.
 
 -spec wake_up(atom(), atom(), [term()]) -> term().
@@ -256,8 +258,8 @@ wake_up(M, F, A) when is_atom(M), is_atom(F), is_list(A) ->
     try
 	apply(M, F, A) 
     catch
-	Class:Reason ->
-	    exit_p(Class, Reason, erlang:get_stacktrace())
+	Class:Reason:Stacktrace ->
+	    exit_p(Class, Reason, Stacktrace)
     end.
 
 exit_p(Class, Reason, Stacktrace) ->
@@ -503,10 +505,13 @@ crash_report(exit, normal, _, _)       -> ok;
 crash_report(exit, shutdown, _, _)     -> ok;
 crash_report(exit, {shutdown,_}, _, _) -> ok;
 crash_report(Class, Reason, StartF, Stacktrace) ->
-    OwnReport = my_info(Class, Reason, StartF, Stacktrace),
-    LinkReport = linked_info(self()),
-    Rep = [OwnReport,LinkReport],
-    error_logger:error_report(crash_report, Rep).
+    ?LOG_ERROR(#{label=>{proc_lib,crash},
+                 report=>[my_info(Class, Reason, StartF, Stacktrace),
+                          linked_info(self())]},
+               #{domain=>[otp,sasl],
+                 report_cb=>fun proc_lib:report_cb/2,
+                 logger_formatter=>#{title=>"CRASH REPORT"},
+                 error_logger=>#{tag=>error_report,type=>crash_report}}).
 
 my_info(Class, Reason, [], Stacktrace) ->
     my_info_1(Class, Reason, Stacktrace);
@@ -742,8 +747,19 @@ check({badrpc,Error})    -> Error;
 check(Res)               -> Res.
 
 %%% -----------------------------------------------------------
-%%% Format (and write) a generated crash info structure.
+%%% Format a generated crash info structure.
 %%% -----------------------------------------------------------
+
+-spec report_cb(CrashReport,FormatOpts) -> unicode:chardata() when
+      CrashReport :: #{label => {proc_lib,crash},
+                       report => [term()]},
+      FormatOpts :: logger:report_cb_config().
+report_cb(#{label:={proc_lib,crash}, report:=CrashReport}, Extra) ->
+    Default = #{chars_limit => unlimited,
+                depth => unlimited,
+                single_line => false,
+                encoding => utf8},
+    do_format(CrashReport, maps:merge(Default,Extra)).
 
 -spec format(CrashReport) -> string() when
       CrashReport :: [term()].
@@ -762,32 +778,51 @@ format(CrashReport, Encoding) ->
       Encoding :: latin1 | unicode | utf8,
       Depth :: unlimited | pos_integer().
 
-format([OwnReport,LinkReport], Encoding, Depth) ->
-    Extra = {Encoding,Depth},
-    MyIndent = "    ",
+format(CrashReport, Encoding, Depth) ->
+    do_format(CrashReport, #{chars_limit => unlimited,
+                             depth => Depth,
+                             encoding => Encoding,
+                             single_line => false}).
+
+do_format([OwnReport,LinkReport], #{single_line:=Single}=Extra) ->
+    Indent = if Single -> "";
+                true -> "  "
+             end,
+    MyIndent = Indent ++ Indent,
+    Sep = nl(Single,"; "),
     OwnFormat = format_report(OwnReport, MyIndent, Extra),
-    LinkFormat = format_link_report(LinkReport, MyIndent, Extra),
-    Str = io_lib:format("  crasher:~n~ts  neighbours:~n~ts",
-                        [OwnFormat, LinkFormat]),
+    LinkFormat = lists:join(Sep,format_link_report(LinkReport, MyIndent, Extra)),
+    Nl = nl(Single," "),
+    Str = io_lib:format("~scrasher:"++Nl++"~ts"++Sep++"~sneighbours:"++Nl++"~ts",
+                        [Indent,OwnFormat,Indent,LinkFormat]),
     lists:flatten(Str).
 
-format_link_report([Link|Reps], Indent, Extra) ->
+format_link_report([Link|Reps], Indent0, #{single_line:=Single}=Extra) ->
     Rep = case Link of
               {neighbour,Rep0} -> Rep0;
               _ -> Link
           end,
+    Indent = if Single -> "";
+                true -> Indent0
+             end,
     LinkIndent = ["  ",Indent],
-    [Indent,"neighbour:\n",format_report(Rep, LinkIndent, Extra)|
+    [[Indent,"neighbour:",nl(Single," "),format_report(Rep, LinkIndent, Extra)]|
      format_link_report(Reps, Indent, Extra)];
 format_link_report(Rep, Indent, Extra) ->
     format_report(Rep, Indent, Extra).
 
-format_report(Rep, Indent, Extra) when is_list(Rep) ->
-    format_rep(Rep, Indent, Extra);
-format_report(Rep, Indent, {Enc,unlimited}) ->
-    io_lib:format("~s~"++modifier(Enc)++"p~n", [Indent, Rep]);
-format_report(Rep, Indent, {Enc,Depth}) ->
-    io_lib:format("~s~"++modifier(Enc)++"P~n", [Indent, Rep, Depth]).
+format_report(Rep, Indent, #{single_line:=Single}=Extra) when is_list(Rep) ->
+    lists:join(nl(Single,", "),format_rep(Rep, Indent, Extra));
+format_report(Rep, Indent0, #{encoding:=Enc,depth:=Depth,
+                              chars_limit:=Limit,single_line:=Single}) ->
+    {P,Tl} = p(Enc,Depth),
+    {Indent,Width} = if Single -> {"","0"};
+                        true -> {Indent0,""}
+                     end,
+    Opts = if is_integer(Limit) -> [{chars_limit,Limit}];
+              true -> []
+           end,
+    io_lib:format("~s~"++Width++P, [Indent, Rep | Tl], Opts).
 
 format_rep([{initial_call,InitialCall}|Rep], Indent, Extra) ->
     [format_mfa(Indent, InitialCall, Extra)|format_rep(Rep, Indent, Extra)];
@@ -799,19 +834,32 @@ format_rep([{Tag,Data}|Rep], Indent, Extra) ->
 format_rep(_, _, _Extra) ->
     [].
 
-format_exception(Class, Reason, StackTrace, {Enc,_}=Extra) ->
+format_exception(Class, Reason, StackTrace,
+                 #{encoding:=Enc,depth:=Depth,chars_limit:=Limit,
+                   single_line:=Single}=Extra) ->
     PF = pp_fun(Extra),
     StackFun = fun(M, _F, _A) -> (M =:= erl_eval) or (M =:= ?MODULE) end,
-    %% EI = "    exception: ",
-    EI = "    ",
-    [EI, lib:format_exception(1+length(EI), Class, Reason, 
-                              StackTrace, StackFun, PF, Enc), "\n"].
+    if Single ->
+            {P,Tl} = p(Enc,Depth),
+            Opts = if is_integer(Limit) -> [{chars_limit,Limit}];
+                      true -> []
+                   end,
+            [atom_to_list(Class), ": ",
+             io_lib:format("~0"++P,[{Reason,StackTrace}|Tl],Opts)];
+       true ->
+            EI = "    ",
+            [EI, erl_error:format_exception(1+length(EI), Class, Reason,
+                                            StackTrace, StackFun, PF, Enc)]
+    end.
 
-format_mfa(Indent, {M,F,Args}=StartF, {Enc,_}=Extra) ->
+format_mfa(Indent0, {M,F,Args}=StartF, #{encoding:=Enc,single_line:=Single}=Extra) ->
+    Indent = if Single -> "";
+                true -> Indent0
+             end,
     try
 	A = length(Args),
 	[Indent,"initial call: ",atom_to_list(M),$:,to_string(F, Enc),$/,
-	 integer_to_list(A),"\n"]
+	 integer_to_list(A)]
     catch
 	error:_ ->
 	    format_tag(Indent, initial_call, StartF, Extra)
@@ -822,15 +870,29 @@ to_string(A, latin1) ->
 to_string(A, _) ->
     io_lib:write_atom(A).
 
-pp_fun({Enc,Depth}) ->
+pp_fun(#{encoding:=Enc,depth:=Depth,chars_limit:=Limit,single_line:=Single}) ->
     {P,Tl} = p(Enc, Depth),
+    Width = if Single -> "0";
+               true -> ""
+            end,
+    Opts = if is_integer(Limit) -> [{chars_limit,Limit}];
+              true -> []
+           end,
     fun(Term, I) -> 
-            io_lib:format("~." ++ integer_to_list(I) ++ P, [Term|Tl])
+            io_lib:format("~" ++ Width ++ "." ++ integer_to_list(I) ++ P,
+                          [Term|Tl], Opts)
     end.
 
-format_tag(Indent, Tag, Data, {Enc,Depth}) ->
+format_tag(Indent0, Tag, Data, #{encoding:=Enc,depth:=Depth,chars_limit:=Limit,single_line:=Single}) ->
     {P,Tl} = p(Enc, Depth),
-    io_lib:format("~s~p: ~80.18" ++ P ++ "\n", [Indent, Tag, Data|Tl]).
+    {Indent,Width} = if Single -> {"","0"};
+                        true -> {Indent0,""}
+                     end,
+    Opts = if is_integer(Limit) -> [{chars_limit,Limit}];
+              true -> []
+           end,
+    io_lib:format("~s~" ++ Width ++ "p: ~" ++ Width ++ ".18" ++ P,
+                  [Indent, Tag, Data|Tl], Opts).
 
 p(Encoding, Depth) ->
     {Letter, Tl}  = case Depth of
@@ -843,6 +905,8 @@ p(Encoding, Depth) ->
 modifier(latin1) -> "";
 modifier(_) -> "t".
 
+nl(true,Else) -> Else;
+nl(false,_) -> "\n".
 
 %%% -----------------------------------------------------------
 %%% Stop a process and wait for it to terminate

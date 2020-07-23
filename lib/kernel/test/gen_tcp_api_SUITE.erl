@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1998-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -605,9 +605,9 @@ ok({ok,V}) -> V;
 ok(NotOk) ->
     try throw(not_ok)
     catch
-	Thrown ->
+	throw:Thrown:Stacktrace ->
 	    erlang:raise(
-	      error, {Thrown, NotOk}, tl(erlang:get_stacktrace()))
+	      error, {Thrown, NotOk}, tl(Stacktrace))
     end.
 
 get_localaddr() ->

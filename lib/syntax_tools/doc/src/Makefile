@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 2006-2017. All Rights Reserved.
+# Copyright Ericsson AB 2006-2019. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -63,9 +63,10 @@ BOOK_FILES = book.xml
 
 
 XML_FILES=\
-	$(BOOK_FILES) $(XML_CHAPTER_FILES) \
-	$(XML_PART_FILES) $(XML_REF3_FILES) $(XML_APPLICATION_FILES) \
+	$(BOOK_FILES) $(XML_PART_FILES)  $(XML_APPLICATION_FILES) \
 	$(XML_NOTES_FILES)
+
+XML_GEN_FILES = $(XML_REF3_FILES:%=$(XMLDIR)/%) $(XML_CHAPTER_FILES:%=$(XMLDIR)/%)
 
 # ----------------------------------------------------
 INFO_FILE = ../../info
@@ -80,6 +81,9 @@ MAN3_FILES = $(XML_REF3_FILES:%.xml=$(MAN3DIR)/%.3)
 HTML_REF_MAN_FILE = $(HTMLDIR)/index.html
 
 TOP_PDF_FILE = $(PDFDIR)/$(APPLICATION)-$(VSN).pdf
+
+EXAMPLES_DIR = ../../examples
+EXAMPLES = $(EXAMPLES_DIR)/demo.erl
 
 SPECS_FILES = $(XML_REF3_FILES:%.xml=$(SPECDIR)/specs_%.xml)
 
@@ -108,11 +112,13 @@ html: gifs $(HTML_REF_MAN_FILE)
 
 man: $(MAN3_FILES)
 
-$(XML_REF3_FILES):
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript $(SRC_DIR)/$(@:%.xml=%.erl)
+$(XML_REF3_FILES:%=$(XMLDIR)/%):
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript \
+	-dir $(XMLDIR) $(SRC_DIR)/$(@:$(XMLDIR)/%.xml=%.erl)
 
-$(XML_CHAPTER_FILES):
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(VSN) -chapter ../overview.edoc
+$(XML_CHAPTER_FILES:%=$(XMLDIR)/%):
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(VSN) \
+	-chapter -dir $(XMLDIR) ../overview.edoc
 
 gifs: $(GIF_FILES:%=$(HTMLDIR)/%)
 
@@ -122,6 +128,7 @@ debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(XML_REF3_FILES) $(XML_CHAPTER_FILES) *.html
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
@@ -142,5 +149,7 @@ release_docs_spec: docs
 	$(INSTALL_DATA) $(INFO_FILE) "$(RELSYSDIR)"
 	$(INSTALL_DIR) "$(RELEASE_PATH)/man/man3"
 	$(INSTALL_DATA) $(MAN3DIR)/* "$(RELEASE_PATH)/man/man3"
+	$(INSTALL_DIR) "$(RELSYSDIR)/examples"
+	$(INSTALL_DATA) $(EXAMPLES) "$(RELSYSDIR)/doc/html"
 
 release_spec:

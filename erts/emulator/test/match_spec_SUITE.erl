@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1999-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1999-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -885,6 +885,26 @@ maps(Config) when is_list(Config) ->
         erlang:match_spec_test(#{<<"b">> =>"camembert","c"=>"cabécou", "wat"=>"hi", b=><<"other">>},
                                [{#{<<"b">> => '$1',"wat" => '$2'},[],[#{a=>'$1',b=>'$2'}]}],
                                table),
+
+    {ok,1,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[],[{map_size,'$1'}]}],table),
+    {ok,'EXIT',[],[]} = erlang:match_spec_test(not_a_map, [{'$1',[],[{map_size,'$1'}]}], table),
+    {ok,false,[],[]} = erlang:match_spec_test(not_a_map, [{'$1',[{map_size,'$1'}],['$_']}], table),
+    {ok,true,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[{'=:=',{map_size,'$1'},1}],[true]}], table),
+
+    {ok,1,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[],[{map_get,a,'$1'}]}], table),
+    {ok,'EXIT',[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[],[{map_get,b,'$1'}]}], table),
+    {ok,'EXIT',[],[]} = erlang:match_spec_test(not_a_map, [{'$1',[],[{map_get,b,'$1'}]}], table),
+    {ok,false,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[{map_get,b,'$1'}],['$_']}], table),
+    {ok,false,[],[]} = erlang:match_spec_test(not_a_map, [{'$1',[{map_get,b,'$1'}],['$_']}], table),
+    {ok,true,[],[]} = erlang:match_spec_test(#{a => true}, [{'$1',[{map_get,a,'$1'}],[true]}], table),
+
+    {ok,true,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[],[{is_map_key,a,'$1'}]}], table),
+    {ok,false,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[],[{is_map_key,b,'$1'}]}], table),
+    {ok,'EXIT',[],[]} = erlang:match_spec_test(not_a_map, [{'$1',[],[{is_map_key,a,'$1'}]}], table),
+    {ok,false,[],[]} = erlang:match_spec_test(#{a => 1}, [{'$1',[{is_map_key,b,'$1'}],['$_']}], table),
+    {ok,false,[],[]} = erlang:match_spec_test(not_a_map, [{'$1',[{is_map_key,b,'$1'}],['$_']}], table),
+    {ok,true,[],[]} = erlang:match_spec_test(#{a => true}, [{'$1',[{is_map_key,a,'$1'}],[true]}], table),
+
     %% large maps
 
     Ls0 = [{I,<<I:32>>}||I <- lists:seq(1,415)],

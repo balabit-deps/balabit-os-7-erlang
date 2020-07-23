@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2012-2016. All Rights Reserved.
+ * Copyright Ericsson AB 2012-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -87,7 +87,6 @@ void erts_set_system_monitor(Eterm monitor);
 Eterm erts_get_system_monitor(void);
 int erts_is_tracer_valid(Process* p);
 
-#ifdef ERTS_SMP
 void erts_check_my_tracer_proc(Process *);
 void erts_block_sys_msg_dispatcher(void);
 void erts_release_sys_msg_dispatcher(void);
@@ -95,9 +94,10 @@ void erts_foreach_sys_msg_in_q(void (*func)(Eterm,
 					    Eterm,
 					    Eterm,
 					    ErlHeapFragment *));
+Eterm erts_set_system_logger(Eterm);
+Eterm erts_get_system_logger(void);
 void erts_queue_error_logger_message(Eterm, Eterm, ErlHeapFragment *);
 void erts_send_sys_msg_proc(Eterm, Eterm, Eterm, ErlHeapFragment *);
-#endif
 
 void trace_send(Process*, Eterm, Eterm);
 void trace_receive(Process*, Eterm, Eterm, ErtsTracingEvent*);
@@ -149,16 +149,12 @@ erts_bif_trace_epilogue(Process *p, Eterm result, int applying,
 			Uint32 flags_meta, BeamInstr* I,
 			ErtsTracer meta_tracer);
 
-#ifdef ERTS_SMP
 void erts_send_pending_trace_msgs(ErtsSchedulerData *esdp);
-#define ERTS_SMP_CHK_PEND_TRACE_MSGS(ESDP)				\
+#define ERTS_CHK_PEND_TRACE_MSGS(ESDP)				\
 do {									\
     if ((ESDP)->pending_trace_msgs)					\
 	erts_send_pending_trace_msgs((ESDP));				\
 } while (0)
-#else
-#define ERTS_SMP_CHK_PEND_TRACE_MSGS(ESDP)
-#endif
 
 #define seq_trace_output(token, msg, type, receiver, process) \
 seq_trace_output_generic((token), (msg), (type), (receiver), (process), NIL)
@@ -204,6 +200,8 @@ int erts_is_tracer_proc_enabled_send(Process* c_p, ErtsProcLocks c_p_locks,
                                      ErtsPTabElementCommon *t_p);
 int erts_is_tracer_enabled(const ErtsTracer tracer, ErtsPTabElementCommon *t_p);
 Eterm erts_tracer_to_term(Process *p, ErtsTracer tracer);
+Eterm erts_build_tracer_to_term(Eterm **hpp, ErlOffHeap *ohp, Uint *szp, ErtsTracer tracer);
+
 ErtsTracer erts_term_to_tracer(Eterm prefix, Eterm term);
 void erts_tracer_replace(ErtsPTabElementCommon *t_p,
                          const ErtsTracer new_tracer);

@@ -2,7 +2,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2019. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -79,6 +79,8 @@ value_option(Flag, Default, On, OnVal, Off, OffVal, Opts) ->
 -type fa()   :: {atom(), arity()}.   % function+arity
 -type ta()   :: {atom(), arity()}.   % type+arity
 
+-type module_or_mfa() :: module() | mfa().
+
 -record(typeinfo, {attr, line}).
 
 %% Usage of records, functions, and imports. The variable table, which
@@ -92,13 +94,6 @@ value_option(Flag, Default, On, OnVal, Off, OffVal, Opts) ->
               :: dict:dict(ta(), line())
          }).
 
-
-%% Are we outside or inside a catch or try/catch?
--type catch_scope() :: 'none'
-                     | 'after_old_catch'
-                     | 'after_try'
-                     | 'wrong_part_of_try'
-                     | 'try_catch'.
 
 %% Define the lint state record.
 %% 'called' and 'exports' contain {Line, {Function, Arity}},
@@ -122,6 +117,8 @@ value_option(Flag, Default, On, OnVal, Off, OffVal, Opts) ->
                    :: erl_anno:anno(),
 	       clashes=[],			%Exported functions named as BIFs
                not_deprecated=[],               %Not considered deprecated
+               not_removed=gb_sets:empty()      %Not considered removed
+                   :: gb_sets:set(module_or_mfa()),
                func=[],                         %Current function
                warn_format=0,                   %Warn format calls
 	       enabled_warnings=[],		%All enabled warnings (ordset).
@@ -144,8 +141,7 @@ value_option(Flag, Default, On, OnVal, Off, OffVal, Opts) ->
                    :: dict:dict(ta(), #typeinfo{}),
                exp_types=gb_sets:empty()        %Exported types
                    :: gb_sets:set(ta()),
-               catch_scope = none               %Inside/outside try or catch
-                   :: catch_scope()
+               in_try_head=false :: boolean()  %In a try head.
               }).
 
 -type lint_state() :: #lint{}.
@@ -232,15 +228,6 @@ format_error({redefine_old_bif_import,{F,A}}) ->
 format_error({redefine_bif_import,{F,A}}) ->
     io_lib:format("import directive overrides auto-imported BIF ~w/~w~n"
 		  " - use \"-compile({no_auto_import,[~w/~w]}).\" to resolve name clash", [F,A,F,A]);
-format_error({get_stacktrace,wrong_part_of_try}) ->
-    "erlang:get_stacktrace/0 used in the wrong part of 'try' expression. "
-        "(Use it in the block between 'catch' and 'end'.)";
-format_error({get_stacktrace,after_old_catch}) ->
-    "erlang:get_stacktrace/0 used following an old-style 'catch' "
-        "may stop working in a future release. (Use it inside 'try'.)";
-format_error({get_stacktrace,after_try}) ->
-    "erlang:get_stacktrace/0 used following a 'try' expression "
-        "may stop working in a future release. (Use it inside 'try'.)";
 format_error({deprecated, MFA, ReplacementMFA, Rel}) ->
     io_lib:format("~s is deprecated and will be removed in ~s; use ~s",
 		  [format_mfa(MFA), Rel, format_mfa(ReplacementMFA)]);
@@ -312,6 +299,10 @@ format_error({unused_var, V}) ->
     io_lib:format("variable ~w is unused", [V]);
 format_error({variable_in_record_def,V}) ->
     io_lib:format("variable ~w in record definition", [V]);
+format_error({stacktrace_guard,V}) ->
+    io_lib:format("stacktrace variable ~w must not be used in a guard", [V]);
+format_error({stacktrace_bound,V}) ->
+    io_lib:format("stacktrace variable ~w must not be previously bound", [V]);
 %% --- binaries ---
 format_error({undefined_bittype,Type}) ->
     io_lib:format("bit type ~tw undefined", [Type]);
@@ -395,6 +386,8 @@ format_error({redefine_callback, {F, A}}) ->
 format_error({bad_callback, {M, F, A}}) ->
     io_lib:format("explicit module not allowed for callback ~tw:~tw/~w",
                   [M, F, A]);
+format_error({bad_module, {M, F, A}}) ->
+    io_lib:format("spec for function ~w:~tw/~w from other module", [M, F, A]);
 format_error({spec_fun_undefined, {F, A}}) ->
     io_lib:format("spec for undefined function ~tw/~w", [F, A]);
 format_error({missing_spec, {F,A}}) ->
@@ -587,8 +580,8 @@ start(File, Opts) ->
 	 {missing_spec_all,
 	  bool_option(warn_missing_spec_all, nowarn_missing_spec_all,
 		      false, Opts)},
-         {get_stacktrace,
-          bool_option(warn_get_stacktrace, nowarn_get_stacktrace,
+         {removed,
+          bool_option(warn_removed, nowarn_removed,
                       true, Opts)}
 	],
     Enabled1 = [Category || {Category,true} <- Enabled0],
@@ -686,8 +679,9 @@ forms(Forms0, St0) ->
 						    no_auto = AutoImportSuppressed}),
     St2 = bif_clashes(Forms, St1),
     St3 = not_deprecated(Forms, St2),
-    St4 = foldl(fun form/2, pre_scan(Forms, St3), Forms),
-    post_traversal_check(Forms, St4).
+    St4 = not_removed(Forms, St3),
+    St5 = foldl(fun form/2, pre_scan(Forms, St4), Forms),
+    post_traversal_check(Forms, St5).
 
 pre_scan([{attribute,L,compile,C} | Fs], St) ->
     case is_warn_enabled(export_all, St) andalso
@@ -847,18 +841,38 @@ bif_clashes(Forms, #lint{nowarn_bif_clash=Nowarn} = St) ->
 
 %% not_deprecated(Forms, State0) -> State
 
-not_deprecated(Forms, St0) ->
+not_deprecated(Forms, #lint{compile=Opts}=St0) ->
     %% There are no line numbers in St0#lint.compile.
     MFAsL = [{MFA,L} ||
                 {attribute, L, compile, Args} <- Forms,
                 {nowarn_deprecated_function, MFAs0} <- lists:flatten([Args]),
                 MFA <- lists:flatten([MFAs0])],
-    Nowarn = [MFA || {MFA,_L} <- MFAsL],
+    Nowarn = [MFA ||
+                 {nowarn_deprecated_function, MFAs0} <- Opts,
+                 MFA <- lists:flatten([MFAs0])],
     ML = [{M,L} || {{M,_F,_A},L} <- MFAsL, is_atom(M)],
     St1 = foldl(fun ({M,L}, St2) ->
                         check_module_name(M, L, St2)
                 end, St0, ML),
     St1#lint{not_deprecated = ordsets:from_list(Nowarn)}.
+
+%% not_removed(Forms, State0) -> State
+
+not_removed(Forms, #lint{compile=Opts}=St0) ->
+    %% There are no line numbers in St0#lint.compile.
+    MFAsL = [{MFA,L} ||
+                {attribute, L, compile, Args} <- Forms,
+                {nowarn_removed, MFAs0} <- lists:flatten([Args]),
+                MFA <- lists:flatten([MFAs0])],
+    Nowarn = [MFA ||
+                 {nowarn_removed, MFAs0} <- Opts,
+                 MFA <- lists:flatten([MFAs0])],
+    St1 = foldl(fun ({{M, _F, _A}, L}, St2) ->
+                        check_module_name(M, L, St2);
+                    ({M,L}, St2) ->
+                        check_module_name(M, L, St2)
+                end, St0, MFAsL),
+    St1#lint{not_removed = gb_sets:from_list(Nowarn)}.
 
 %% The nowarn_bif_clash directive is not only deprecated, it's actually an error from R14A
 disallowed_compile_flags(Forms, St0) ->
@@ -1421,7 +1435,7 @@ call_function(Line, F, A, #lint{usage=Usage0,called=Cd,func=Func,file=File}=St) 
 %% function(Line, Name, Arity, Clauses, State) -> State.
 
 function(Line, Name, Arity, Cs, St0) ->
-    St1 = St0#lint{func={Name,Arity},catch_scope=none},
+    St1 = St0#lint{func={Name,Arity}},
     St2 = define_function(Line, Name, Arity, St1),
     clauses(Cs, St2).
 
@@ -2111,6 +2125,10 @@ is_gexpr({cons,_L,H,T}, Info) -> is_gexpr_list([H,T], Info);
 is_gexpr({tuple,_L,Es}, Info) -> is_gexpr_list(Es, Info);
 %%is_gexpr({struct,_L,_Tag,Es}, Info) ->
 %%    is_gexpr_list(Es, Info);
+is_gexpr({map,_L,Es}, Info) ->
+    is_map_fields(Es, Info);
+is_gexpr({map,_L,Src,Es}, Info) ->
+    is_gexpr(Src, Info) andalso is_map_fields(Es, Info);
 is_gexpr({record_index,_L,_Name,Field}, Info) ->
     is_gexpr(Field, Info);
 is_gexpr({record_field,_L,Rec,_Name,Field}, Info) ->
@@ -2152,6 +2170,14 @@ is_gexpr_op(Op, A) ->
     end.
 
 is_gexpr_list(Es, Info) -> all(fun (E) -> is_gexpr(E, Info) end, Es).
+
+is_map_fields([{Tag,_,K,V}|Fs], Info) when Tag =:= map_field_assoc;
+                                           Tag =:= map_field_exact ->
+    is_gexpr(K, Info) andalso
+    is_gexpr(V, Info) andalso
+    is_map_fields(Fs, Info);
+is_map_fields([], _Info) -> true;
+is_map_fields(_T, _Info) -> false.
 
 is_gexpr_fields(Fs, L, Name, {RDs,_}=Info) ->
     IFs = case dict:find(Name, RDs) of
@@ -2252,6 +2278,9 @@ expr({'fun',Line,Body}, Vt, St) ->
     case Body of
         {clauses,Cs} ->
             fun_clauses(Cs, Vt, St);
+        {function,record_info,2} ->
+            %% It is illegal to call record_info/2 with unknown arguments.
+            {[],add_error(Line, illegal_record_info, St)};
         {function,F,A} ->
 	    %% BifClash - Fun expression
             %% N.B. Only allows BIFs here as well, NO IMPORTS!!
@@ -2266,8 +2295,7 @@ expr({'fun',Line,Body}, Vt, St) ->
 	    {[],St};
 	{function,M,F,A} ->
 	    %% New in R15.
-	    {Bvt, St1} = expr_list([M,F,A], Vt, St),
-	    {vtupdate(Bvt, Vt),St1}
+	    expr_list([M,F,A], Vt, St)
     end;
 expr({named_fun,_,'_',Cs}, Vt, St) ->
     fun_clauses(Cs, Vt, St);
@@ -2362,7 +2390,7 @@ expr({call,Line,F,As}, Vt, St0) ->
 expr({'try',Line,Es,Scs,Ccs,As}, Vt, St0) ->
     %% Currently, we don't allow any exports because later
     %% passes cannot handle exports in combination with 'after'.
-    {Evt0,St1} = exprs(Es, Vt, St0#lint{catch_scope=wrong_part_of_try}),
+    {Evt0,St1} = exprs(Es, Vt, St0),
     TryLine = {'try',Line},
     Uvt = vtunsafe(TryLine, Evt0, Vt),
     Evt1 = vtupdate(Uvt, Evt0),
@@ -2374,12 +2402,11 @@ expr({'try',Line,Es,Scs,Ccs,As}, Vt, St0) ->
     {Avt0,St} = exprs(As, vtupdate(Evt2, Vt), St2),
     Avt1 = vtupdate(vtunsafe(TryLine, Avt0, Vt), Avt0),
     Avt = vtmerge(Evt2, Avt1),
-    {Avt,St#lint{catch_scope=after_try}};
+    {Avt,St};
 expr({'catch',Line,E}, Vt, St0) ->
     %% No new variables added, flag new variables as unsafe.
     {Evt,St} = expr(E, Vt, St0),
-    {vtupdate(vtunsafe({'catch',Line}, Evt, Vt), Evt),
-     St#lint{catch_scope=after_old_catch}};
+    {vtupdate(vtunsafe({'catch',Line}, Evt, Vt), Evt),St};
 expr({match,_Line,P,E}, Vt, St0) ->
     {Evt,St1} = expr(E, Vt, St0),
     {Pvt,Bvt,St2} = pattern(P, vtupdate(Evt, Vt), St1),
@@ -2985,7 +3012,13 @@ spec_decl(Line, MFA0, TypeSpecs, St00 = #lint{specs = Specs, module = Mod}) ->
     St1 = St0#lint{specs = dict:store(MFA, Line, Specs)},
     case dict:is_key(MFA, Specs) of
 	true -> add_error(Line, {redefine_spec, MFA0}, St1);
-	false -> check_specs(TypeSpecs, spec_wrong_arity, Arity, St1)
+	false ->
+            case MFA of
+                {Mod, _, _} ->
+                    check_specs(TypeSpecs, spec_wrong_arity, Arity, St1);
+                _ ->
+                    add_error(Line, {bad_module, MFA}, St1)
+            end
     end.
 
 %% callback_decl(Line, Fun, Types, State) -> State.
@@ -3218,11 +3251,11 @@ is_module_dialyzer_option(Option) ->
 
 try_clauses(Scs, Ccs, In, Vt, St0) ->
     {Csvt0,St1} = icrt_clauses(Scs, Vt, St0),
-    St2 = St1#lint{catch_scope=try_catch},
+    St2 = St1#lint{in_try_head=true},
     {Csvt1,St3} = icrt_clauses(Ccs, Vt, St2),
     Csvt = Csvt0 ++ Csvt1,
     UpdVt = icrt_export(Csvt, Vt, In, St3),
-    {UpdVt,St3}.
+    {UpdVt,St3#lint{in_try_head=false}}.
 
 %% icrt_clauses(Clauses, In, ImportVarTable, State) ->
 %%      {UpdVt,State}.
@@ -3238,13 +3271,30 @@ icrt_clauses(Cs, In, Vt, St0) ->
 icrt_clauses(Cs, Vt, St) ->
     mapfoldl(fun (C, St0) -> icrt_clause(C, Vt, St0) end, St, Cs).
 
-icrt_clause({clause,_Line,H,G,B}, Vt0, #lint{catch_scope=Scope}=St0) ->
-    {Hvt,Binvt,St1} = head(H, Vt0, St0),
-    Vt1 = vtupdate(Hvt, Binvt),
-    {Gvt,St2} = guard(G, vtupdate(Vt1, Vt0), St1),
-    Vt2 = vtupdate(Gvt, Vt1),
-    {Bvt,St3} = exprs(B, vtupdate(Vt2, Vt0), St2),
-    {vtupdate(Bvt, Vt2),St3#lint{catch_scope=Scope}}.
+icrt_clause({clause,_Line,H,G,B}, Vt0, St0) ->
+    Vt1 = taint_stack_var(Vt0, H, St0),
+    {Hvt,Binvt,St1} = head(H, Vt1, St0),
+    Vt2 = vtupdate(Hvt, Binvt),
+    Vt3 = taint_stack_var(Vt2, H, St0),
+    {Gvt,St2} = guard(G, vtupdate(Vt3, Vt0), St1#lint{in_try_head=false}),
+    Vt4 = vtupdate(Gvt, Vt2),
+    {Bvt,St3} = exprs(B, vtupdate(Vt4, Vt0), St2),
+    {vtupdate(Bvt, Vt4),St3}.
+
+taint_stack_var(Vt, Pat, #lint{in_try_head=true}) ->
+    [{tuple,_,[_,_,{var,_,Stk}]}] = Pat,
+    case Stk of
+        '_' ->
+            Vt;
+        _ ->
+            lists:map(fun({V,{bound,Used,Lines}}) when V =:= Stk ->
+                              {V,{stacktrace,Used,Lines}};
+                         (B) ->
+                              B
+                      end, Vt)
+    end;
+taint_stack_var(Vt, _Pat, #lint{in_try_head=false}) ->
+    Vt.
 
 icrt_export(Vts, Vt, {Tag,Attrs}, St) ->
     {_File,Loc} = loc(Attrs, St),
@@ -3484,6 +3534,9 @@ pat_var(V, Line, Vt, Bvt, St) ->
                     {[{V,{bound,used,Ls}}],[],
                      %% As this is matching, exported vars are risky.
                      add_warning(Line, {exported_var,V,From}, St)};
+                {ok,{stacktrace,_Usage,Ls}} ->
+                    {[{V,{bound,used,Ls}}],[],
+                     add_error(Line, {stacktrace_bound,V}, St)};
                 error when St#lint.recdef_top ->
                     {[],[{V,{bound,unused,[Line]}}],
                      add_error(Line, {variable_in_record_def,V}, St)};
@@ -3541,6 +3594,9 @@ expr_var(V, Line, Vt, St) ->
                 false ->
                     {[{V,{{export,From},used,Ls}}],St}
             end;
+        {ok,{stacktrace,_Usage,Ls}} ->
+            {[{V,{bound,used,Ls}}],
+             add_error(Line, {stacktrace_guard,V}, St)};
         error ->
             {[{V,{bound,used,[Line]}}],
              add_error(Line, {unbound_var,V}, St)}
@@ -3708,8 +3764,7 @@ has_wildcard_field([]) -> false.
 check_remote_function(Line, M, F, As, St0) ->
     St1 = deprecated_function(Line, M, F, As, St0),
     St2 = check_qlc_hrl(Line, M, F, As, St1),
-    St3 = check_get_stacktrace(Line, M, F, As, St2),
-    format_function(Line, M, F, As, St3).
+    format_function(Line, M, F, As, St2).
 
 %% check_qlc_hrl(Line, ModName, FuncName, [Arg], State) -> State
 %%  Add warning if qlc:q/1,2 has been called but qlc.hrl has not
@@ -3751,29 +3806,22 @@ deprecated_function(Line, M, F, As, St) ->
 		    add_warning(Line, {deprecated, MFA, Replacement, Rel}, St)
             end;
 	{removed, String} when is_list(String) ->
-	    add_warning(Line, {removed, MFA, String}, St);
+	    add_removed_warning(Line, MFA, {removed, MFA, String}, St);
 	{removed, Replacement, Rel} ->
-	    add_warning(Line, {removed, MFA, Replacement, Rel}, St);
+	    add_removed_warning(Line, MFA, {removed, MFA, Replacement, Rel}, St);
         no ->
 	    St
     end.
 
-check_get_stacktrace(Line, erlang, get_stacktrace, [], St) ->
-    case St of
-        #lint{catch_scope=none} ->
-            St;
-        #lint{catch_scope=try_catch} ->
-            St;
-        #lint{catch_scope=Scope} ->
-            case is_warn_enabled(get_stacktrace, St) of
-                false ->
-                    St;
-                true ->
-                    add_warning(Line, {get_stacktrace,Scope}, St)
-            end
-    end;
-check_get_stacktrace(_, _, _, _, St) ->
-    St.
+add_removed_warning(Line, {M, _, _}=MFA, Warning, #lint{not_removed=NotRemoved}=St) ->
+    case is_warn_enabled(removed, St) andalso
+        not gb_sets:is_element(M, NotRemoved) andalso
+        not gb_sets:is_element(MFA, NotRemoved) of
+        true ->
+            add_warning(Line, Warning, St);
+        false ->
+            St
+    end.
 
 -dialyzer({no_match, deprecated_type/5}).
 
@@ -3910,10 +3958,9 @@ check_format_string(Fmt) ->
     extract_sequences(Fmt, []).
 
 extract_sequences(Fmt, Need0) ->
-    case string:chr(Fmt, $~) of
-        0 -> {ok,lists:reverse(Need0)};         %That's it
-        Pos ->
-            Fmt1 = string:substr(Fmt, Pos+1),   %Skip ~
+    case string:find(Fmt, [$~]) of
+        nomatch -> {ok,lists:reverse(Need0)};         %That's it
+        [$~|Fmt1] ->
             case extract_sequence(1, Fmt1, Need0) of
                 {ok,Need1,Rest} -> extract_sequences(Rest, Need1);
                 Error -> Error
@@ -3944,6 +3991,8 @@ extract_sequence(3, [$.,_|Fmt], Need) ->
     extract_sequence(4, Fmt, Need);
 extract_sequence(3, Fmt, Need) ->
     extract_sequence(4, Fmt, Need);
+extract_sequence(4, [$t, $l | Fmt], Need) ->
+    extract_sequence(4, [$l, $t | Fmt], Need);
 extract_sequence(4, [$t, $c | Fmt], Need) ->
     extract_sequence(5, [$c|Fmt], Need);
 extract_sequence(4, [$t, $s | Fmt], Need) ->
@@ -3960,8 +4009,14 @@ extract_sequence(4, [$t, C | _Fmt], _Need) ->
     {error,"invalid control ~t" ++ [C]};
 extract_sequence(4, [$l, $p | Fmt], Need) ->
     extract_sequence(5, [$p|Fmt], Need);
+extract_sequence(4, [$l, $t, $p | Fmt], Need) ->
+    extract_sequence(5, [$p|Fmt], Need);
 extract_sequence(4, [$l, $P | Fmt], Need) ->
     extract_sequence(5, [$P|Fmt], Need);
+extract_sequence(4, [$l, $t, $P | Fmt], Need) ->
+    extract_sequence(5, [$P|Fmt], Need);
+extract_sequence(4, [$l, $t, C | _Fmt], _Need) ->
+    {error,"invalid control ~lt" ++ [C]};
 extract_sequence(4, [$l, C | _Fmt], _Need) ->
     {error,"invalid control ~l" ++ [C]};
 extract_sequence(4, Fmt, Need) ->

@@ -70,9 +70,10 @@ HTML_STYLESHEET_FILES = \
 BOOK_FILES = book.xml
 
 XML_FILES = \
-	$(BOOK_FILES) $(XML_CHAPTER_FILES)  $(XML_NOTES_FILES) \
-	$(XML_PART_FILES) $(XML_REF3_FILES) $(XML_APPLICATION_FILES)
+	$(BOOK_FILES) $(XML_NOTES_FILES) \
+	$(XML_PART_FILES) $(XML_APPLICATION_FILES)
 
+XML_GEN_FILES = $(XML_REF3_FILES:%=$(XMLDIR)/%) $(XML_CHAPTER_FILES:%=$(XMLDIR)/%)
 
 # ----------------------------------------------------
 INFO_FILE = ../../info
@@ -122,11 +123,11 @@ man: $(MAN3_FILES)
 
 gifs: $(GIF_FILES:%=$(HTMLDIR)/%)
 
-$(XML_REF3_FILES):
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EUNIT_VSN) -i $(EUNIT_INC_DIR) $(EUNIT_DIR)/$(@:%.xml=%.erl)
+$(XML_REF3_FILES:%=$(XMLDIR)/%):
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EUNIT_VSN) -i $(EUNIT_INC_DIR) -dir $(XMLDIR) $(EUNIT_DIR)/$(@:$(XMLDIR)/%.xml=%.erl)
 
-$(XML_CHAPTER_FILES):
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EUNIT_VSN) -chapter ../overview.edoc
+$(XML_CHAPTER_FILES:%=$(XMLDIR)/%):
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EUNIT_VSN) -chapter -dir $(XMLDIR) ../overview.edoc
 
 info:
 	@echo "XML_PART_FILES: $(XML_PART_FILES)"
@@ -145,6 +146,7 @@ debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(XML_REF3_FILES) $(XML_CHAPTER_FILES) *.html
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)

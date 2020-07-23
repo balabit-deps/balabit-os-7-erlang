@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2001-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -35,12 +35,12 @@
 	 basic_andalso_orelse/1,traverse_dcd/1,
 	 check_qlc_hrl/1,andalso_semi/1,t_tuple_size/1,binary_part/1,
 	 bad_constants/1,bad_guards/1,
-	 guard_in_catch/1,beam_bool_SUITE/1]).
+         guard_in_catch/1,beam_bool_SUITE/1,
+         repeated_type_tests/1]).
 
 suite() -> [{ct_hooks,[ts_install_cth]}].
 
 all() -> 
-    test_lib:recompile(?MODULE),
     [{group,p}].
 
 groups() -> 
@@ -54,9 +54,11 @@ groups() ->
        rel_ops,rel_op_combinations,
        literal_type_tests,basic_andalso_orelse,traverse_dcd,
        check_qlc_hrl,andalso_semi,t_tuple_size,binary_part,
-       bad_constants,bad_guards,guard_in_catch,beam_bool_SUITE]}].
+       bad_constants,bad_guards,guard_in_catch,beam_bool_SUITE,
+       repeated_type_tests]}].
 
 init_per_suite(Config) ->
+    test_lib:recompile(?MODULE),
     Config.
 
 end_per_suite(_Config) ->
@@ -1291,6 +1293,36 @@ rel_ops(Config) when is_list(Config) ->
     true = any_atom /= id(42),
     true = [] /= id(42),
 
+    %% Coverage of beam_utils:bif_to_test/3
+    Empty = id([]),
+    ?T(==, [], Empty),
+
+    %% Cover beam_ssa_dead:turn_op('/=').
+    ok = (fun(A, B) when is_atom(A) ->
+                  X = id(A /= B),
+                  if
+                      X -> ok;
+                      true -> error
+                  end
+          end)(a, b),
+    ok = (fun(A, B) when is_atom(A) ->
+                  X = id(B /= A),
+                  if
+                        X -> ok;
+                        true -> error
+                    end
+            end)(a, b),
+
+    %% Cover beam_ssa_dead.
+    Arrow = fun([T1,T2]) when T1 == $>, T2 == $>;
+                              T1 == $<, T2 == $| ->  true;
+               (_) -> false
+            end,
+    true = Arrow(">>"),
+    true = Arrow("<|"),
+    false = Arrow("><"),
+    false = Arrow(""),
+
     ok.
 
 -undef(TestOp).
@@ -1324,6 +1356,9 @@ rel_op_combinations_1(N, Digits) ->
     Bool = is_digit_6(N),
     Bool = is_digit_7(N),
     Bool = is_digit_8(N),
+    Bool = is_digit_9(42, N),
+    Bool = is_digit_10(N, 0),
+    Bool = is_digit_11(N, 0),
     rel_op_combinations_1(N-1, Digits).
 
 is_digit_1(X) when 16#0660 =< X, X =< 16#0669 -> true;
@@ -1366,6 +1401,24 @@ is_digit_8(X) when X =< 16#06F9, X > (16#06F0-1) -> true;
 is_digit_8(X) when X =< 16#0669, X > (16#0660-1) -> true;
 is_digit_8(16#0670) -> false;
 is_digit_8(_) -> false.
+
+is_digit_9(A, 0) when A =:= 42 -> false;
+is_digit_9(_, X) when X > 16#065F, X < 16#066A -> true;
+is_digit_9(_, X) when 16#0030 =< X, X =< 16#0039 -> true;
+is_digit_9(_, X) when 16#06F0 =< X, X =< 16#06F9 -> true;
+is_digit_9(_, _) -> false.
+
+is_digit_10(0, 0) -> false;
+is_digit_10(X, _) when X < 16#066A, 16#0660 =< X -> true;
+is_digit_10(X, _) when 16#0030 =< X, X =< 16#0039 -> true;
+is_digit_10(X, _) when 16#06F0 =< X, X =< 16#06F9 -> true;
+is_digit_10(_, _) -> false.
+
+is_digit_11(0, 0) -> false;
+is_digit_11(X, _) when X =< 16#0669, 16#0660 =< X -> true;
+is_digit_11(X, _) when 16#0030 =< X, X =< 16#0039 -> true;
+is_digit_11(X, _) when 16#06F0 =< X, X =< 16#06F9 -> true;
+is_digit_11(_, _) -> false.
 
 rel_op_combinations_2(0, _) ->
     ok;
@@ -1467,6 +1520,7 @@ rel_op_combinations_3(N, Red) ->
     Val = redundant_9(N),
     Val = redundant_10(N),
     Val = redundant_11(N),
+    Val = redundant_11(N),
     rel_op_combinations_3(N-1, Red).
 
 redundant_1(X) when X >= 51, X =< 80 -> 5*X;
@@ -1520,6 +1574,10 @@ redundant_11(X) when X < 51 -> 2*X;
 redundant_11(X) when X =:= 10 -> 2*X;
 redundant_11(X) when X >= 51, X =< 80 -> 5*X;
 redundant_11(_) -> none.
+
+redundant_12(X) when X >= 50, X =< 80 -> 2*X;
+redundant_12(X) when X < 51 -> 5*X;
+redundant_12(_) -> none.
 
 %% Test type tests on literal values. (From emulator test suites.)
 literal_type_tests(Config) when is_list(Config) ->
@@ -1615,7 +1673,9 @@ type_tests() ->
      is_reference,
      is_port,
      is_binary,
-     is_function].
+     is_bitstring,
+     is_function,
+     is_map].
 
 basic_andalso_orelse(Config) when is_list(Config) ->
     T = id({type,integers,23,42}),
@@ -1771,15 +1831,10 @@ t_tuple_size(Config) when is_list(Config) ->
     error = ludicrous_tuple_size({a,b,c}),
     error = ludicrous_tuple_size([a,b,c]),
 
-    %% Test the "unsafe case" - the register assigned the tuple size is
-    %% not killed.
-    DataDir = test_lib:get_data_dir(Config),
-    File = filename:join(DataDir, "guard_SUITE_tuple_size"),
-    {ok,Mod,Code} = compile:file(File, [from_asm,binary]),
-    code:load_binary(Mod, File, Code),
-    14 = Mod:t({1,2,3,4}),
-    _ = code:delete(Mod),
-    _ = code:purge(Mod),
+    good_ip({1,2,3,4}),
+    good_ip({1,2,3,4,5,6,7,8}),
+    error = validate_ip({42,11}),
+    error = validate_ip(atom),
     
     ok.
 
@@ -1796,6 +1851,16 @@ ludicrous_tuple_size(T)
 ludicrous_tuple_size(T)
   when tuple_size(T) =:= 16#FFFFFFFFFFFFFFFF -> ok;
 ludicrous_tuple_size(_) -> error.
+
+good_ip(IP) ->
+    IP = validate_ip(IP).
+
+validate_ip(Value) when is_tuple(Value) andalso
+                        ((size(Value) =:= 4) orelse (size(Value) =:= 8)) ->
+    %% size/1 (converted to tuple_size) used more than once.
+    Value;
+validate_ip(_) ->
+    error.
 
 %%
 %% The binary_part/2,3 guard BIFs
@@ -2198,6 +2263,23 @@ maps() ->
 evidence(#{0 := Charge}) when 0; #{[] => Charge} == #{[] => 42} ->
     ok.
 
+repeated_type_tests(_Config) ->
+    binary = repeated_type_test(<<42>>),
+    bitstring = repeated_type_test(<<1:1>>),
+    other = repeated_type_test(atom),
+    ok.
+
+repeated_type_test(T) ->
+    %% Test for a bug in beam_ssa_dead.
+    if is_bitstring(T) ->
+            if is_binary(T) ->                  %This test would be optimized away.
+                    binary;
+               true ->
+                    bitstring
+            end;
+       true ->
+            other
+    end.
 
 
 %% Call this function to turn off constant propagation.

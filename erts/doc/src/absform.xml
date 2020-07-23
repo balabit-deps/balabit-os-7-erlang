@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2001</year><year>2017</year>
+      <year>2001</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -407,9 +407,8 @@
       </item>
       <item>
         <p>If E is a map creation <c>#{A_1, ..., A_k}</c>,
-          where each <c>A_i</c> is an association <c>E_i_1 => E_i_2</c>
-          or <c>E_i_1 := E_i_2</c>, then Rep(E) =
-          <c>{map,LINE,[Rep(A_1), ..., Rep(A_k)]}</c>.
+          where each <c>A_i</c> is an association <c>E_i_1 => E_i_2</c>,
+	  then Rep(E) = <c>{map,LINE,[Rep(A_1), ..., Rep(A_k)]}</c>.
           For Rep(A), see below.</p>
       </item>
       <item>
@@ -614,26 +613,58 @@
       <item>
         <p>If C is a catch clause <c>P -> B</c>,
           where <c>P</c> is a pattern and <c>B</c> is a body, then
-          Rep(C) = <c>{clause,LINE,[Rep({throw,P,_})],[],Rep(B)}</c>.</p>
+          Rep(C) = <c>{clause,LINE,[Rep({throw,P,_})],[],Rep(B)}</c>,
+	  that is, a catch clause with an explicit exception class
+	  <c>throw</c> and with or without an explicit stacktrace
+	  variable <c>_</c> cannot be distinguished from a catch clause
+	  without an explicit exception class and without an explicit
+	  stacktrace variable.</p>
       </item>
       <item>
         <p>If C is a catch clause <c>X : P -> B</c>,
           where <c>X</c> is an atomic literal or a variable pattern,
           <c>P</c> is a pattern, and <c>B</c> is a body, then
-          Rep(C) = <c>{clause,LINE,[Rep({X,P,_})],[],Rep(B)}</c>.</p>
+          Rep(C) = <c>{clause,LINE,[Rep({X,P,_})],[],Rep(B)}</c>,
+	  that is, a catch clause with an explicit exception class and
+	  with an explicit stacktrace variable <c>_</c> cannot be
+	  distinguished from a catch clause with an explicit exception
+	  class and without an explicit stacktrace variable.</p>
+      </item>
+      <item>
+        <p>If C is a catch clause <c>X : P : S -> B</c>,
+          where <c>X</c> is an atomic literal or a variable pattern,
+          <c>P</c> is a pattern, <c>S</c> is a variable, and <c>B</c>
+	  is a body, then
+          Rep(C) = <c>{clause,LINE,[Rep({X,P,S})],[],Rep(B)}</c>.</p>
       </item>
       <item>
         <p>If C is a catch clause <c>P when Gs -> B</c>,
           where <c>P</c> is a pattern, <c>Gs</c> is a guard sequence,
           and <c>B</c> is a body, then
-          Rep(C) = <c>{clause,LINE,[Rep({throw,P,_})],Rep(Gs),Rep(B)}</c>.</p>
+          Rep(C) = <c>{clause,LINE,[Rep({throw,P,_})],Rep(Gs),Rep(B)}</c>,
+	  that is, a catch clause with an explicit exception class
+	  <c>throw</c> and with or without an explicit stacktrace
+	  variable <c>_</c> cannot be distinguished from a catch clause
+	  without an explicit exception class and without an explicit
+	  stacktrace variable.</p>
       </item>
       <item>
         <p>If C is a catch clause <c>X : P when Gs -> B</c>,
           where <c>X</c> is an atomic literal or a variable pattern,
           <c>P</c> is a pattern, <c>Gs</c> is a guard sequence,
           and <c>B</c> is a body, then
-          Rep(C) = <c>{clause,LINE,[Rep({X,P,_})],Rep(Gs),Rep(B)}</c>.</p>
+          Rep(C) = <c>{clause,LINE,[Rep({X,P,_})],Rep(Gs),Rep(B)}</c>,
+	  that is, a catch clause with an explicit exception class and
+	  with an explicit stacktrace variable <c>_</c> cannot be
+	  distinguished from a catch clause with an explicit exception
+	  class and without an explicit stacktrace variable.</p>
+      </item>
+      <item>
+        <p>If C is a catch clause <c>X : P : S when Gs -> B</c>,
+          where <c>X</c> is an atomic literal or a variable pattern,
+          <c>P</c> is a pattern, <c>Gs</c> is a guard sequence,
+          <c>S</c> is a variable, and <c>B</c> is a body, then
+          Rep(C) = <c>{clause,LINE,[Rep({X,P,S})],Rep(Gs),Rep(B)}</c>.</p>
       </item>
       <item>
         <p>If C is a function clause <c>( Ps ) -> B</c>,
@@ -699,9 +730,8 @@
       </item>
       <item>
         <p>If Gt is a map creation <c>#{A_1, ..., A_k}</c>,
-          where each <c>A_i</c> is an association <c>Gt_i_1 => Gt_i_2</c>
-          or <c>Gt_i_1 := Gt_i_2</c>, then Rep(Gt) =
-          <c>{map,LINE,[Rep(A_1), ..., Rep(A_k)]}</c>.
+          where each <c>A_i</c> is an association <c>Gt_i_1 => Gt_i_2</c>,
+	  then Rep(Gt) = <c>{map,LINE,[Rep(A_1), ..., Rep(A_k)]}</c>.
           For Rep(A), see above.</p>
       </item>
       <item>
@@ -771,7 +801,8 @@
           <c>{ann_type,LINE,[Rep(A),Rep(T_0)]}</c>.</p>
       </item>
       <item>
-        <p>If T is an atom or integer literal L, then Rep(T) = Rep(L).</p>
+        <p>If T is an atom, a character, or an integer literal L,
+	  then Rep(T) = Rep(L).</p>
       </item>
       <item>
         <p>If T is a bitstring type <c>&lt;&lt;_:M,_:_*N>></c>,
@@ -780,7 +811,9 @@
       </item>
       <item>
         <p>If T is the empty list type <c>[]</c>, then Rep(T) =
-          <c>{type,Line,nil,[]}</c>.</p>
+          <c>{type,Line,nil,[]}</c>, that is, the empty list type
+          <c>[]</c> cannot be distinguished from the predefined type
+          <c>nil()</c>.</p>
       </item>
       <item>
         <p>If T is a fun type <c>fun()</c>, then Rep(T) =

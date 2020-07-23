@@ -5,7 +5,7 @@
   <header>
     <copyright>
       <year>1996</year>
-      <year>2016</year>
+      <year>2019</year>
       <holder>Ericsson AB, All Rights Reserved</holder>
     </copyright>            
     <legalnotice>
@@ -34,7 +34,7 @@
     <rev>B</rev>
     <file>erl_pp.xml</file>
   </header>
-  <module>erl_pp</module>
+  <module since="">erl_pp</module>
   <modulesummary>The Erlang pretty printer.</modulesummary>
   <description>
     <p>The functions in this module are used to generate
@@ -65,6 +65,10 @@
     </datatype>
     <datatype>
       <name name="option"/>
+      <desc>
+        <p>The option <c>quote_singleton_atom_types</c>
+          is used to add quotes to all singleton atom types.</p>
+      </desc>
     </datatype>
     <datatype>
       <name name="options"/>
@@ -73,8 +77,8 @@
 
   <funcs>
     <func>
-      <name name="attribute" arity="1"/>
-      <name name="attribute" arity="2"/>
+      <name name="attribute" arity="1" since=""/>
+      <name name="attribute" arity="2" since=""/>
       <fsummary>Pretty print an attribute.</fsummary>
       <desc>
         <p>Same as <seealso marker="#form/1"><c>form/1,2</c></seealso>,
@@ -83,10 +87,10 @@
     </func>
 
     <func>
-      <name name="expr" arity="1"/>
-      <name name="expr" arity="2"/>
-      <name name="expr" arity="3"/>
-      <name name="expr" arity="4"/>
+      <name name="expr" arity="1" since=""/>
+      <name name="expr" arity="2" since=""/>
+      <name name="expr" arity="3" since=""/>
+      <name name="expr" arity="4" since=""/>
       <fsummary>Pretty print one <c>Expression</c>.</fsummary>
       <desc>
         <p>Prints one expression. It is useful for implementing hooks (see
@@ -96,9 +100,9 @@
     </func>
 
     <func>
-      <name name="exprs" arity="1"/>
-      <name name="exprs" arity="2"/>
-      <name name="exprs" arity="3"/>
+      <name name="exprs" arity="1" since=""/>
+      <name name="exprs" arity="2" since=""/>
+      <name name="exprs" arity="3" since=""/>
       <fsummary>Pretty print <c>Expressions</c>.</fsummary>
       <desc>
         <p>Same as <seealso marker="#form/1"><c>form/1,2</c></seealso>,
@@ -108,8 +112,8 @@
     </func>
 
     <func>
-      <name name="form" arity="1"/>
-      <name name="form" arity="2"/>
+      <name name="form" arity="1" since=""/>
+      <name name="form" arity="2" since=""/>
       <fsummary>Pretty print a form.</fsummary>
       <desc>
         <p>Pretty prints a
@@ -120,8 +124,8 @@
     </func>
 
     <func>
-      <name name="function" arity="1"/>
-      <name name="function" arity="2"/>
+      <name name="function" arity="1" since=""/>
+      <name name="function" arity="2" since=""/>
       <fsummary>Pretty print a function.</fsummary>
       <desc>
         <p>Same as <seealso marker="#form/1"><c>form/1,2</c></seealso>,
@@ -130,8 +134,8 @@
     </func>
 
     <func>
-      <name name="guard" arity="1"/>
-      <name name="guard" arity="2"/>
+      <name name="guard" arity="1" since=""/>
+      <name name="guard" arity="2" since=""/>
       <fsummary>Pretty print a guard.</fsummary>
       <desc>
         <p>Same as <seealso marker="#form/1"><c>form/1,2</c></seealso>,

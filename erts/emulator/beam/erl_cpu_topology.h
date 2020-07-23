@@ -27,14 +27,19 @@
 #ifndef ERL_CPU_TOPOLOGY_H__
 #define ERL_CPU_TOPOLOGY_H__
 
-void erts_pre_early_init_cpu_topology(int *max_rg_p,
-				      int *conf_p,
-				      int *onln_p,
-				      int *avail_p);
-void erts_early_init_cpu_topology(int no_schedulers,
-				  int *max_main_threads_p,
-				  int max_reader_groups,
-				  int *reader_groups_p);
+void
+erts_pre_early_init_cpu_topology(int *max_dcg_p,
+                                 int *max_rg_p,
+				 int *conf_p,
+				 int *onln_p,
+				 int *avail_p);
+void
+erts_early_init_cpu_topology(int no_schedulers,
+			     int *max_main_threads_p,
+			     int max_reader_groups,
+			     int *reader_groups_p,
+                             int max_decentralized_counter_groups,
+                             int *decentralized_counter_groups_p);
 void erts_init_cpu_topology(void);
 
 
@@ -60,11 +65,9 @@ int erts_init_scheduler_bind_type_string(char *how);
 int erts_init_cpu_topology_string(char *topology_str);
 
 void erts_sched_check_cpu_bind(ErtsSchedulerData *esdp);
-#ifdef ERTS_SMP
 void erts_sched_init_check_cpu_bind(ErtsSchedulerData *esdp);
 void erts_sched_check_cpu_bind_prep_suspend(ErtsSchedulerData *esdp);
 void erts_sched_check_cpu_bind_post_suspend(ErtsSchedulerData *esdp);
-#endif
 
 int erts_update_cpu_info(void);
 
@@ -72,6 +75,7 @@ Eterm erts_bind_schedulers(Process *c_p, Eterm how);
 Eterm erts_get_schedulers_binds(Process *c_p);
 
 Eterm erts_get_reader_groups_map(Process *c_p);
+Eterm erts_get_decentralized_counter_groups_map(Process *c_p);
 
 Eterm erts_set_cpu_topology(Process *c_p, Eterm term);
 Eterm erts_get_cpu_topology_term(Process *c_p, Eterm which);

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 2017. All Rights Reserved.
+ * Copyright Ericsson AB 2017-2018. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -658,7 +658,7 @@ io_list_vec_count(Eterm obj, Uint *v_size,
 int
 erts_ioq_iolist_vec_len(Eterm obj, int* vsize, Uint* csize,
                         Uint* pvsize, Uint* pcsize,
-                        Uint* total_size, Uint blimit)
+                        size_t* total_size, Uint blimit)
 {
     DECLARE_ESTACK(s);
     Eterm* objp;
@@ -669,7 +669,7 @@ erts_ioq_iolist_vec_len(Eterm obj, int* vsize, Uint* csize,
     Uint p_v_size = 0;
     Uint p_c_size = 0;
     Uint p_in_clist = 0;
-    Uint total;
+    size_t total;
 
     goto L_jump_start;  /* avoid a push */
 
@@ -801,12 +801,11 @@ static Eterm iol2v_make_sub_bin(iol2v_state_t *state, Eterm bin_term,
     ERTS_GET_REAL_BIN(bin_term, orig_pb_term,
         byte_offset, bit_offset, bit_size);
 
-    (void)bit_offset;
-    (void)bit_size;
+    ASSERT(bit_size == 0);
 
     sb->thing_word = HEADER_SUB_BIN;
+    sb->bitoffs = bit_offset;
     sb->bitsize = 0;
-    sb->bitoffs = 0;
     sb->orig = orig_pb_term;
     sb->is_writable = 0;
 
@@ -817,24 +816,15 @@ static Eterm iol2v_make_sub_bin(iol2v_state_t *state, Eterm bin_term,
 }
 
 static Eterm iol2v_promote_acc(iol2v_state_t *state) {
-    ProcBin *pb;
+    Eterm bin;
 
-    state->acc = erts_bin_realloc(state->acc, state->acc_size);
-
-    pb = (ProcBin*)HAlloc(state->process, PROC_BIN_SIZE);
-    pb->thing_word = HEADER_PROC_BIN;
-    pb->size = state->acc_size;
-    pb->val = state->acc;
-    pb->bytes = (byte*)(state->acc)->orig_bytes;
-    pb->flags = 0;
-    pb->next = MSO(state->process).first;
-    OH_OVERHEAD(&(MSO(state->process)), pb->size / sizeof(Eterm));
-    MSO(state->process).first = (struct erl_off_heap_header*)pb;
-
+    bin = erts_build_proc_bin(&MSO(state->process),
+                              HAlloc(state->process, PROC_BIN_SIZE),
+                              erts_bin_realloc(state->acc, state->acc_size));
     state->acc_size = 0;
     state->acc = NULL;
 
-    return make_binary(pb);
+    return bin;
 }
 
 /* Destructively enqueues a term to the result list, saving us the hassle of
@@ -984,7 +974,7 @@ static int iol2v_append_binary(iol2v_state_t *state, Eterm bin_term) {
     parent_header = binary_val(parent_binary);
     binary_size = binary_size(bin_term);
 
-    if (bit_offset != 0 || bit_size != 0) {
+    if (bit_size != 0) {
         return 0;
     } else if (binary_size == 0) {
         state->bytereds_spent += 1;
@@ -1026,8 +1016,16 @@ static int iol2v_append_binary(iol2v_state_t *state, Eterm bin_term) {
          * then just copy it into the accumulator. */
         iol2v_expand_acc(state, binary_size);
 
-        sys_memcpy(&(state->acc)->orig_bytes[state->acc_size],
-            binary_data, binary_size);
+        if (ERTS_LIKELY(bit_offset == 0)) {
+            sys_memcpy(&(state->acc)->orig_bytes[state->acc_size],
+                binary_data, binary_size);
+        } else {
+            ASSERT(binary_size <= ERTS_UWORD_MAX / 8);
+
+            erts_copy_bits(binary_data, bit_offset, 1,
+                (byte*)&(state->acc)->orig_bytes[state->acc_size], 0, 1,
+                binary_size * 8);
+        }
 
         state->acc_size += binary_size;
     } else {
@@ -1038,8 +1036,16 @@ static int iol2v_append_binary(iol2v_state_t *state, Eterm bin_term) {
 
         iol2v_expand_acc(state, spill);
 
-        sys_memcpy(&(state->acc)->orig_bytes[state->acc_size],
-            binary_data, spill);
+        if (ERTS_LIKELY(bit_offset == 0)) {
+            sys_memcpy(&(state->acc)->orig_bytes[state->acc_size],
+                binary_data, spill);
+        } else {
+            ASSERT(binary_size <= ERTS_UWORD_MAX / 8);
+
+            erts_copy_bits(binary_data, bit_offset, 1,
+                (byte*)&(state->acc)->orig_bytes[state->acc_size], 0, 1,
+                spill * 8);
+        }
 
         state->acc_size += spill;
 
@@ -1188,7 +1194,10 @@ BIF_RETTYPE iolist_to_iovec_1(BIF_ALIST_1) {
     if (is_nil(BIF_ARG_1)) {
         BIF_RET(NIL);
     } else if (is_binary(BIF_ARG_1)) {
-        if (binary_size(BIF_ARG_1) != 0) {
+        if (binary_bitsize(BIF_ARG_1) != 0) {
+            ASSERT(!(BIF_P->flags & F_DISABLE_GC));
+            BIF_ERROR(BIF_P, BADARG);
+        } else if (binary_size(BIF_ARG_1) != 0) {
             Eterm *hp = HAlloc(BIF_P, 2);
 
             BIF_RET(CONS(hp, BIF_ARG_1, NIL));

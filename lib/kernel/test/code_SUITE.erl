@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 -export([all/0, suite/0,groups/0,init_per_group/2,end_per_group/2]).
 -export([set_path/1, get_path/1, add_path/1, add_paths/1, del_path/1,
 	 replace_path/1, load_file/1, load_abs/1, ensure_loaded/1,
-	 delete/1, purge/1, purge_many_exits/1, soft_purge/1, is_loaded/1,
-	 all_loaded/1,
+	 delete/1, purge/1, purge_many_exits/0, purge_many_exits/1,
+         soft_purge/1, is_loaded/1, all_loaded/1,
 	 load_binary/1, dir_req/1, object_code/1, set_path_file/1,
 	 upgrade/1,
 	 sticky_dir/1, pa_pz_option/1, add_del_path/1,
@@ -55,7 +55,7 @@
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
-     {timetrap,{minutes,5}}].
+     {timetrap,{seconds,30}}].
 
 all() ->
     [set_path, get_path, add_path, add_paths, del_path,
@@ -139,6 +139,11 @@ end_per_testcase(TC, Config) when TC == mult_lib_roots;
 end_per_testcase(on_load_embedded, Config) ->
     LinkName = proplists:get_value(link_name, Config),
     _ = del_link(LinkName),
+    end_per_testcase(Config);
+end_per_testcase(upgrade, Config) ->
+    %% Make sure tracing is turned off even if the test times out.
+    erlang:trace_pattern({error_handler,undefined_function,3}, false, [global]),
+    erlang:trace(self(), false, [call]),
     end_per_testcase(Config);
 end_per_testcase(_Func, Config) ->
     end_per_testcase(Config).
@@ -391,6 +396,9 @@ purge(Config) when is_list(Config) ->
     process_flag(trap_exit, OldFlag),
     ok.
 
+purge_many_exits() ->
+    [{timetrap, {minutes, 2}}].
+
 purge_many_exits(Config) when is_list(Config) ->
     OldFlag = process_flag(trap_exit, true),
 
@@ -525,7 +533,7 @@ upgrade(Config) ->
             T = [beam, hipe],
             [upgrade_do(DataDir, Client, T) || Client <- T],
 
-            case hipe:llvm_support_available() of
+            case hipe:erllvm_is_supported() of
                 false -> ok;
                 true  ->
                     T2 = [beam, hipe_llvm],
@@ -931,37 +939,34 @@ purge_stacktrace(Config) when is_list(Config) ->
     code:purge(code_b_test),
     try code_b_test:call(fun(b) -> ok end, a)
     catch
-	error:function_clause ->
+	error:function_clause:Stacktrace ->
 	    code:load_file(code_b_test),
-	    case erlang:get_stacktrace() of
+	    case Stacktrace of
 		      [{?MODULE,_,[a],_},
 		       {code_b_test,call,2,_},
 		       {?MODULE,purge_stacktrace,1,_}|_] ->
-			  false = code:purge(code_b_test),
-			  [] = erlang:get_stacktrace()
+			  false = code:purge(code_b_test)
 		  end
     end,
     try code_b_test:call(nofun, 2)
     catch
-	error:function_clause ->
+	error:function_clause:Stacktrace2 ->
 	    code:load_file(code_b_test),
-	    case erlang:get_stacktrace() of
+	    case Stacktrace2 of
 		      [{code_b_test,call,[nofun,2],_},
 		       {?MODULE,purge_stacktrace,1,_}|_] ->
-			  false = code:purge(code_b_test),
-			  [] = erlang:get_stacktrace()
+			  false = code:purge(code_b_test)
 		  end
     end,
     Args = [erlang,error,[badarg]],
     try code_b_test:call(erlang, error, [badarg,Args])
     catch
-	error:badarg ->
+	error:badarg:Stacktrace3 ->
 	    code:load_file(code_b_test),
-	    case erlang:get_stacktrace() of
+	    case Stacktrace3 of
 		      [{code_b_test,call,Args,_},
 		       {?MODULE,purge_stacktrace,1,_}|_] ->
-			  false = code:purge(code_b_test),
-			  [] = erlang:get_stacktrace()
+			  false = code:purge(code_b_test)
 		  end
     end,
     ok.
@@ -1024,6 +1029,13 @@ mult_lib_remove_prefix([H|T1], [H|T2]) ->
 mult_lib_remove_prefix([$/|T], []) -> T.
 
 bad_erl_libs(Config) when is_list(Config) ->
+    %% Preserve ERL_LIBS if set.
+    BadLibs0 = "/no/such/dir",
+    BadLibs =
+         case os:getenv("ERL_LIBS") of
+             false -> BadLibs0;
+             Libs -> BadLibs0 ++ ":" ++ Libs
+         end,
     {ok,Node} =
 	test_server:start_node(bad_erl_libs, slave, []),
     Code = rpc:call(Node,code,get_path,[]),
@@ -1031,10 +1043,9 @@ bad_erl_libs(Config) when is_list(Config) ->
 
     {ok,Node2} =
 	test_server:start_node(bad_erl_libs, slave,
-			       [{args,"-env ERL_LIBS /no/such/dir"}]),
+			       [{args,"-env ERL_LIBS " ++ BadLibs}]),
     Code2 = rpc:call(Node,code,get_path,[]),
     test_server:stop_node(Node2),
-
     %% Test that code path is not affected by the faulty ERL_LIBS
     Code = Code2,
 
@@ -1553,6 +1564,11 @@ on_load_update_code_1(3, Mod) ->
 
 %% Test -on_load while trace feature 'on_load' is enabled (OTP-14612)
 on_load_trace_on_load(Config) ->
+    %% 'on_load' enables tracing for all newly loaded modules, so we make a dry
+    %% run to ensure that ancillary modules like 'merl' won't be loaded during
+    %% the actual test.
+    on_load_update(Config),
+
     Papa = self(),
     Tracer = spawn_link(fun F() -> receive M -> Papa ! M end, F() end),
     {tracer,[]} = erlang:trace_info(self(),tracer),

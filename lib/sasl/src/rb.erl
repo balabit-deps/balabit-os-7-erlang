@@ -586,14 +586,14 @@ find_widths([], _Modifier, DescrWidth, DateWidth, Data) ->
     {DescrWidth+1, DateWidth+1, lists:reverse(Data)};
 find_widths([H|T], Modifier, DescrWidth, DateWidth, Data) ->
     DescrTerm = element(3,H),
-    Descr = lists:flatten(io_lib:format("~"++Modifier++"w", [DescrTerm])),
-    DescrTry = length(Descr),
+    Descr = io_lib:format("~"++Modifier++"w", [DescrTerm]),
+    DescrTry = string:length(Descr),
     NewDescrWidth =
         if
             DescrTry > DescrWidth -> DescrTry;
             true -> DescrWidth
         end,
-    DateTry = length(element(4, H)),
+    DateTry = string:length(element(4, H)),
     NewDateWitdh =
         if
             DateTry > DateWidth -> DateTry;
@@ -890,7 +890,7 @@ read_rep(Fd, FilePosition, Device, Abort, Log) ->
     
 handle_bad_form(Date, Msg, Device, Abort, Log) ->
     io:format("rb: ERROR! A report on bad form was encountered. " ++
-	      "It can not be printed to the log.~n~n"),
+	      "It cannot be printed to the log.~n~n"),
     io:format("Details:~n~p ~tp~n~n", [Date,Msg]),
     case {Abort,Device,open_log_file(Log)} of
 	{true,standard_io,standard_io} ->

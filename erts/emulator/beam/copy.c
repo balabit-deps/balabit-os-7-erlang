@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2017. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -611,7 +611,7 @@ Eterm copy_struct_x(Eterm obj, Uint sz, Eterm** hpp, ErlOffHeap* off_heap, Uint 
     Eterm* htop;
     Eterm* hbot;
     Eterm* hp;
-    Eterm* objp;
+    Eterm* ERTS_RESTRICT objp;
     Eterm* tp;
     Eterm  res;
     Eterm  elem;
@@ -845,7 +845,7 @@ Eterm copy_struct_x(Eterm obj, Uint sz, Eterm** hpp, ErlOffHeap* off_heap, Uint 
 		    funp = (ErlFunThing *) tp;
 		    funp->next = off_heap->first;
 		    off_heap->first = (struct erl_off_heap_header*) funp;
-		    erts_smp_refc_inc(&funp->fe->refc, 2);
+		    erts_refc_inc(&funp->fe->refc, 2);
 		    *argp = make_fun(tp);
 		}
 		break;
@@ -854,7 +854,7 @@ Eterm copy_struct_x(Eterm obj, Uint sz, Eterm** hpp, ErlOffHeap* off_heap, Uint 
 	    case EXTERNAL_REF_SUBTAG:
 		{
 		  ExternalThing *etp = (ExternalThing *) objp;
-		  erts_smp_refc_inc(&etp->node->refc, 2);
+		  erts_ref_node_entry(etp->node, 2, make_boxed(htop));
 		}
 	    L_off_heap_node_container_common:
 		{
@@ -1074,6 +1074,7 @@ Uint copy_shared_calculate(Eterm obj, erts_shcopy_t *info)
     Eterm* ptr;
     Eterm *lit_purge_ptr = info->lit_purge_ptr;
     Uint lit_purge_sz = info->lit_purge_sz;
+    int copy_literals = info->copy_literals;
 #ifdef DEBUG
     Eterm mypid = erts_get_current_pid();
 #endif
@@ -1119,7 +1120,7 @@ Uint copy_shared_calculate(Eterm obj, erts_shcopy_t *info)
 	    /* off heap list pointers are copied verbatim */
 	    if (erts_is_literal(obj,ptr)) {
 		VERBOSE(DEBUG_SHCOPY, ("[pid=%T] bypassed copying %p is %T\n", mypid, ptr, obj));
-                if (in_literal_purge_area(ptr))
+                if (copy_literals || in_literal_purge_area(ptr))
                     info->literal_size += size_object(obj);
 		goto pop_next;
 	    }
@@ -1170,7 +1171,7 @@ Uint copy_shared_calculate(Eterm obj, erts_shcopy_t *info)
 	    /* off heap pointers to boxes are copied verbatim */
 	    if (erts_is_literal(obj,ptr)) {
 		VERBOSE(DEBUG_SHCOPY, ("[pid=%T] bypassed copying %p is %T\n", mypid, ptr, obj));
-                if (in_literal_purge_area(ptr))
+                if (copy_literals || in_literal_purge_area(ptr))
                     info->literal_size += size_object(obj);
 		goto pop_next;
 	    }
@@ -1338,6 +1339,7 @@ Uint copy_shared_perform(Eterm obj, Uint size, erts_shcopy_t *info,
     unsigned remaining;
     Eterm *lit_purge_ptr = info->lit_purge_ptr;
     Uint lit_purge_sz = info->lit_purge_sz;
+    int copy_literals = info->copy_literals;
 #ifdef DEBUG
     Eterm mypid = erts_get_current_pid();
     Eterm saved_obj = obj;
@@ -1387,7 +1389,7 @@ Uint copy_shared_perform(Eterm obj, Uint size, erts_shcopy_t *info,
 	    ptr = list_val(obj);
 	    /* off heap list pointers are copied verbatim */
 	    if (erts_is_literal(obj,ptr)) {
-                if (!in_literal_purge_area(ptr)) {
+                if (!(copy_literals || in_literal_purge_area(ptr))) {
                     *resp = obj;
                 } else {
                     Uint bsz = 0;
@@ -1455,7 +1457,7 @@ Uint copy_shared_perform(Eterm obj, Uint size, erts_shcopy_t *info,
 	    ptr = boxed_val(obj);
 	    /* off heap pointers to boxes are copied verbatim */
 	    if (erts_is_literal(obj,ptr)) {
-                if (!in_literal_purge_area(ptr)) {
+                if (!(copy_literals || in_literal_purge_area(ptr))) {
                     *resp = obj;
                 } else {
                     Uint bsz = 0;
@@ -1531,7 +1533,7 @@ Uint copy_shared_perform(Eterm obj, Uint size, erts_shcopy_t *info,
 		}
 		funp->next = off_heap->first;
 		off_heap->first = (struct erl_off_heap_header*) funp;
-		erts_smp_refc_inc(&funp->fe->refc, 2);
+		erts_refc_inc(&funp->fe->refc, 2);
 		goto cleanup_next;
 	    }
 	    case MAP_SUBTAG:
@@ -1658,7 +1660,7 @@ Uint copy_shared_perform(Eterm obj, Uint size, erts_shcopy_t *info,
 	    case EXTERNAL_REF_SUBTAG:
 	    {
 		ExternalThing *etp = (ExternalThing *) ptr;
-		erts_smp_refc_inc(&etp->node->refc, 2);
+                erts_ref_node_entry(etp->node, 2, make_boxed(hp));
 	    }
 	  off_heap_node_container_common:
 	    {
@@ -1821,7 +1823,8 @@ all_clean:
  *
  * NOTE: Assumes that term is a tuple (ptr is an untagged tuple ptr).
  */
-Eterm copy_shallow(Eterm* ptr, Uint sz, Eterm** hpp, ErlOffHeap* off_heap)
+Eterm copy_shallow(Eterm* ERTS_RESTRICT ptr, Uint sz, Eterm** hpp,
+                   ErlOffHeap* off_heap)
 {
     Eterm* tp = ptr;
     Eterm* hp = *hpp;
@@ -1855,7 +1858,7 @@ Eterm copy_shallow(Eterm* ptr, Uint sz, Eterm** hpp, ErlOffHeap* off_heap)
 	    case FUN_SUBTAG:
 		{
 		    ErlFunThing* funp = (ErlFunThing *) (tp-1);
-		    erts_smp_refc_inc(&funp->fe->refc, 2);
+		    erts_refc_inc(&funp->fe->refc, 2);
 		}
 		goto off_heap_common;
 	    case EXTERNAL_PID_SUBTAG:
@@ -1863,7 +1866,7 @@ Eterm copy_shallow(Eterm* ptr, Uint sz, Eterm** hpp, ErlOffHeap* off_heap)
 	    case EXTERNAL_REF_SUBTAG:
 		{
 		    ExternalThing* etp = (ExternalThing *) (tp-1);
-		    erts_smp_refc_inc(&etp->node->refc, 2);
+                    erts_ref_node_entry(etp->node, 2, make_boxed(hp-1));
 		}
 	    off_heap_common:
 		{
@@ -1985,7 +1988,7 @@ move_one_frag(Eterm** hpp, ErlHeapFragment* frag, ErlOffHeap* off_heap, int lite
 	if (is_header(val)) {
 	    struct erl_off_heap_header* hdr = (struct erl_off_heap_header*)hp;
 	    ASSERT(ptr + header_arity(val) < end);
-	    move_boxed(&ptr, val, &hp, &dummy_ref);
+	    ptr = move_boxed(ptr, val, &hp, &dummy_ref);
 	    switch (val & _HEADER_SUBTAG_MASK) {
 	    case REF_SUBTAG:
 		if (is_ordinary_ref_thing(hdr))
@@ -2002,7 +2005,7 @@ move_one_frag(Eterm** hpp, ErlHeapFragment* frag, ErlOffHeap* off_heap, int lite
 	}
 	else { /* must be a cons cell */
 	    ASSERT(ptr+1 < end);
-	    move_cons(&ptr, val, &hp, &dummy_ref);
+	    move_cons(ptr, val, &hp, &dummy_ref);
 	    ptr += 2;
 	}
     }

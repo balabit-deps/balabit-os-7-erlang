@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("kernel/include/inet.hrl").
+-include_lib("kernel/src/inet_res.hrl").
 -include_lib("kernel/src/inet_dns.hrl").
 
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
@@ -34,13 +35,14 @@
 	 ipv4_to_ipv6/0, ipv4_to_ipv6/1,
 	 host_and_addr/0, host_and_addr/1,
 	 t_gethostnative/1, 
-	 gethostnative_parallell/1, cname_loop/1, 
+	 gethostnative_parallell/1, cname_loop/1, missing_hosts_reload/1,
          gethostnative_soft_restart/0, gethostnative_soft_restart/1,
 	 gethostnative_debug_level/0, gethostnative_debug_level/1,
 	 lookup_bad_search_option/1,
 	 getif/1,
 	 getif_ifr_name_overflow/1,getservbyname_overflow/1, getifaddrs/1,
-	 parse_strict_address/1, simple_netns/1, simple_netns_open/1,
+	 parse_strict_address/1, ipv4_mapped_ipv6_address/1,
+         simple_netns/1, simple_netns_open/1,
          simple_bind_to_device/1, simple_bind_to_device_open/1]).
 
 -export([get_hosts/1, get_ipv6_hosts/1, parse_hosts/1, parse_address/1,
@@ -55,7 +57,7 @@ all() ->
     [t_gethostbyaddr, t_gethostbyname, t_getaddr,
      t_gethostbyaddr_v6, t_gethostbyname_v6, t_getaddr_v6,
      ipv4_to_ipv6, host_and_addr, {group, parse},
-     t_gethostnative, gethostnative_parallell, cname_loop,
+     t_gethostnative, gethostnative_parallell, cname_loop, missing_hosts_reload,
      gethostnative_debug_level, gethostnative_soft_restart,
      lookup_bad_search_option,
      getif, getif_ifr_name_overflow, getservbyname_overflow,
@@ -96,7 +98,7 @@ end_per_group(_GroupName, Config) ->
 init_per_testcase(lookup_bad_search_option, Config) ->
     Db = inet_db,
     Key = res_lookup,
-    %% The bad option can not enter through inet_db:set_lookup/1,
+    %% The bad option cannot enter through inet_db:set_lookup/1,
     %% but through e.g .inetrc.
     Prev = ets:lookup(Db, Key),
     ets:delete(Db, Key),
@@ -667,6 +669,26 @@ parse_strict_address(Config) when is_list(Config) ->
     {ok, {3089,3106,23603,50240,0,0,119,136}} =
 	inet:parse_strict_address("c11:0c22:5c33:c440::077:0088").
 
+ipv4_mapped_ipv6_address(Config) when is_list(Config) ->
+    {D1,D2,D3,D4} = IPv4Address =
+        {rand:uniform(256) - 1,
+         rand:uniform(256) - 1,
+         rand:uniform(256) - 1,
+         rand:uniform(256) - 1},
+    E7 = (D1 bsl 8) bor D2,
+    E8 = (D3 bsl 8) bor D4,
+    io:format("IPv4Address: ~p.~n", [IPv4Address]),
+    {0,0,0,0,0,65535,E7,E8} = inet:ipv4_mapped_ipv6_address(IPv4Address),
+    IPv6Address =
+        {rand:uniform(65536) - 1,
+         rand:uniform(65536) - 1,
+         rand:uniform(65536) - 1,
+         rand:uniform(65536) - 1,
+         rand:uniform(65536) - 1,
+         rand:uniform(65536) - 1, E7, E8},
+    IPv4Address = inet:ipv4_mapped_ipv6_address(IPv6Address),
+    ok.
+
 t_gethostnative(Config) when is_list(Config) ->
     %% this will result in 26 bytes sent which causes problem in Windows
     %% if the port-program has not assured stdin to be read in BINARY mode
@@ -819,6 +841,32 @@ cname_loop(Config) when is_list(Config) ->
     ok.
 
 
+%% Test that hosts file gets reloaded correctly in case when it
+% was missing during initial startup
+missing_hosts_reload(Config) when is_list(Config) ->
+    RootDir = proplists:get_value(priv_dir,Config),
+    HostsFile = filename:join(RootDir, atom_to_list(?MODULE) ++ ".hosts"),
+    InetRc = filename:join(RootDir, "inetrc"),
+    ok = file:write_file(InetRc, "{hosts_file, \"" ++ HostsFile ++ "\"}.\n"),
+    {error, enoent} = file:read_file_info(HostsFile),
+    % start a node
+    Pa = filename:dirname(code:which(?MODULE)),
+    {ok, TestNode} = test_server:start_node(?MODULE, slave,
+        [{args, "-pa " ++ Pa ++ " -kernel inetrc '\"" ++ InetRc ++ "\"'"}]),
+    % ensure it has our RC
+    Rc = rpc:call(TestNode, inet_db, get_rc, []),
+    {hosts_file, HostsFile} = lists:keyfind(hosts_file, 1, Rc),
+    % ensure it does not resolve
+    {error, nxdomain} = rpc:call(TestNode, inet_hosts, gethostbyname, ["somehost"]),
+    % write hosts file
+    ok = file:write_file(HostsFile, "1.2.3.4 somehost"),
+    % wait for cached timestamp to expire
+    timer:sleep(?RES_FILE_UPDATE_TM * 1000 + 100),
+    % ensure it DOES resolve
+    {ok,{hostent,"somehost",[],inet,4,[{1,2,3,4}]}} =
+        rpc:call(TestNode, inet_hosts, gethostbyname, ["somehost"]),
+    % cleanup
+    true = test_server:stop_node(TestNode).
 
 %% These must be run in the whole suite since they need
 %% the host list and require inet_gethost_native to be started.
@@ -1039,28 +1087,26 @@ getservbyname_overflow(Config) when is_list(Config) ->
 getifaddrs(Config) when is_list (Config) ->
     {ok,IfAddrs} = inet:getifaddrs(),
     io:format("IfAddrs = ~p.~n", [IfAddrs]),
-    case
-	{os:type(),
-	 [If ||
-	     {If,Opts} <- IfAddrs,
-	     lists:keymember(hwaddr, 1, Opts)]} of
-	{{unix,sunos},[]} -> ok;
-	{OT,[]} ->
-	    ct:fail({should_have_hwaddr,OT});
-	_ -> ok
+    case [If || {If,Opts} <- IfAddrs, lists:keymember(hwaddr, 1, Opts)] of
+        [] ->
+            case os:type() of
+                {unix,sunos} -> ok;
+                OT ->
+                    ct:fail({should_have_hwaddr,OT})
+            end;
+        [_|_] -> ok
     end,
-    Addrs =
-	[element(1, A) || A <- ifaddrs(IfAddrs)],
+    Addrs = ifaddrs(IfAddrs),
     io:format("Addrs = ~p.~n", [Addrs]),
     [check_addr(Addr) || Addr <- Addrs],
     ok.
 
-check_addr({addr,Addr})
+check_addr(Addr)
   when tuple_size(Addr) =:= 8,
        element(1, Addr) band 16#FFC0 =:= 16#FE80 ->
     io:format("Addr: ~p link local; SKIPPED!~n", [Addr]),
     ok;
-check_addr({addr,Addr}) ->
+check_addr(Addr) ->
     io:format("Addr: ~p.~n", [Addr]),
     Ping = "ping",
     Pong = "pong",
@@ -1076,80 +1122,86 @@ check_addr({addr,Addr}) ->
     ok = gen_tcp:close(S2),
     ok = gen_tcp:close(L).
 
--record(ifopts, {name,flags,addrs=[],hwaddr}).
+ifaddrs(IfOpts) ->
+    IfMap = collect_ifopts(IfOpts),
+    ChkFun =
+        fun Self({{_,Flags} = Key, Opts}, ok) ->
+                Broadcast = lists:member(broadcast, Flags),
+                P2P = lists:member(pointtopoint, Flags),
+                case Opts of
+                    [{addr,_},{netmask,_},{broadaddr,_}|Os]
+                      when Broadcast ->
+                        Self({Key, Os}, ok);
+                    [{addr,_},{netmask,_},{dstaddr,_}|Os]
+                      when P2P ->
+                        Self({Key, Os}, ok);
+                    [{addr,_},{netmask,_}|Os] ->
+                        Self({Key, Os}, ok);
+                    [{hwaddr,_}|Os] ->
+                        Self({Key, Os}, ok);
+                    [] ->
+                        ok
+                end
+        end,
+    fold_ifopts(ChkFun, ok, IfMap),
+    AddrsFun =
+        fun ({{_,Flags}, Opts}, Acc) ->
+                case
+                    lists:member(running, Flags)
+                    andalso (not lists:member(pointtopoint, Flags))
+                of
+                    true ->
+                        lists:reverse(
+                          [Addr || {addr,Addr} <- Opts],
+                          Acc);
+                    false ->
+                        Acc
+                end
+        end,
+    fold_ifopts(AddrsFun, [], IfMap).
 
-ifaddrs([]) -> [];
-ifaddrs([{If,Opts}|IOs]) ->
-    #ifopts{flags=F} = Ifopts = check_ifopts(Opts, #ifopts{name=If}),
-    case F of
-	{flags,Flags} ->
-	    case lists:member(up, Flags) of
-		true ->
-		  Ifopts#ifopts.addrs;
-		false ->
-		    []
-	    end ++ ifaddrs(IOs);
-	undefined ->
-	    ifaddrs(IOs)
+collect_ifopts(IfOpts) ->
+    collect_ifopts(IfOpts, #{}).
+%%
+collect_ifopts(IfOpts, IfMap) ->
+    case IfOpts of
+        [{If,[{flags,Flags}|Opts]}|IfOs] ->
+            Key = {If,Flags},
+            case maps:is_key(Key, IfMap) of
+                true ->
+                    ct:fail({unexpected_ifopts,IfOpts,IfMap});
+                false ->
+                    collect_ifopts(IfOs, IfMap, Opts, Key, [])
+            end;
+        [] ->
+            IfMap;
+        _ ->
+            ct:fail({unexpected_ifopts,IfOpts,IfMap})
+    end.
+%%
+collect_ifopts(IfOpts, IfMap, Opts, Key, R) ->
+    case Opts of
+        [{flags,_}|_] ->
+            {If,_} = Key,
+            collect_ifopts(
+              [{If,Opts}|IfOpts], maps:put(Key, lists:reverse(R), IfMap));
+        [OptVal|Os] ->
+            collect_ifopts(IfOpts, IfMap, Os, Key, [OptVal|R]);
+        [] ->
+            collect_ifopts(IfOpts, maps:put(Key, lists:reverse(R), IfMap))
     end.
 
-check_ifopts([], #ifopts{flags=F,addrs=Raddrs}=Ifopts) ->
-    Addrs = lists:reverse(Raddrs),
-    R = Ifopts#ifopts{addrs=Addrs},
-    io:format("~p.~n", [R]),
-    %% See how we did...
-    {flags,Flags} = F,
-    case lists:member(broadcast, Flags) of
-	true ->
-	    [case A of
-		 {{addr,_},{netmask,_},{broadaddr,_}} ->
-		     A;
-		 {{addr,T},{netmask,_}} when tuple_size(T) =:= 8 ->
-		     A
-	     end || A <- Addrs];
-	false ->
-	    case lists:member(pointtopoint, Flags) of
-		true ->
-		    [case A of
-			 {{addr,_},{netmask,_},{dstaddr,_}} ->
-			     A
-		     end || A <- Addrs];
-		false ->
-		    [case A of
-			 {{addr,_},{netmask,_}} ->
-			     A
-		     end || A <- Addrs]
-	    end
-    end,
-    R;
-check_ifopts([{flags,_}=F|Opts], #ifopts{flags=undefined}=Ifopts) ->
-    check_ifopts(Opts, Ifopts#ifopts{flags=F});
-check_ifopts([{flags,_}=F|Opts], #ifopts{flags=Flags}=Ifopts) ->
-    case F of
-	Flags ->
-	    check_ifopts(Opts, Ifopts);
-	_ ->
-	    ct:fail({multiple_flags,F,Ifopts})
-    end;
-check_ifopts(
-  [{addr,_}=A,{netmask,_}=N,{dstaddr,_}=D|Opts],
-  #ifopts{addrs=Addrs}=Ifopts) ->
-    check_ifopts(Opts, Ifopts#ifopts{addrs=[{A,N,D}|Addrs]});
-check_ifopts(
-  [{addr,_}=A,{netmask,_}=N,{broadaddr,_}=B|Opts],
-  #ifopts{addrs=Addrs}=Ifopts) ->
-    check_ifopts(Opts, Ifopts#ifopts{addrs=[{A,N,B}|Addrs]});
-check_ifopts(
-  [{addr,_}=A,{netmask,_}=N|Opts],
-  #ifopts{addrs=Addrs}=Ifopts) ->
-    check_ifopts(Opts, Ifopts#ifopts{addrs=[{A,N}|Addrs]});
-check_ifopts([{addr,_}=A|Opts], #ifopts{addrs=Addrs}=Ifopts) ->
-    check_ifopts(Opts, Ifopts#ifopts{addrs=[{A}|Addrs]});
-check_ifopts([{hwaddr,Hwaddr}=H|Opts], #ifopts{hwaddr=undefined}=Ifopts)
-  when is_list(Hwaddr) ->
-    check_ifopts(Opts, Ifopts#ifopts{hwaddr=H});
-check_ifopts([{hwaddr,_}=H|_], #ifopts{}=Ifopts) ->
-    ct:fail({multiple_hwaddrs,H,Ifopts}).
+fold_ifopts(Fun, Acc, IfMap) ->
+    fold_ifopts(Fun, Acc, IfMap, maps:keys(IfMap)).
+%%
+fold_ifopts(Fun, Acc, IfMap, Keys) ->
+    case Keys of
+        [Key|Ks] ->
+            Opts = maps:get(Key, IfMap),
+            fold_ifopts(Fun, Fun({Key,Opts}, Acc), IfMap, Ks);
+        [] ->
+            Acc
+    end.
 
 %% Works just like lists:member/2, except that any {127,_,_,_} tuple
 %% matches any other {127,_,_,_}. We do this to handle Linux systems

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 -module(ssh_sftp).
 
--behaviour(ssh_channel).
+-behaviour(ssh_client_channel).
 
 -include_lib("kernel/include/file.hrl").
 -include("ssh.hrl").
@@ -47,10 +47,12 @@
 	 recv_window/1, list_dir/2, read_file/2, write_file/3,
 	 recv_window/2, list_dir/3, read_file/3, write_file/4]).
 
-%% ssh_channel callbacks
+%% ssh_client_channel callbacks
 -export([init/1, handle_call/3, handle_cast/2, code_change/3, handle_msg/2, handle_ssh_msg/2, terminate/2]).
 %% TODO: Should be placed elsewhere ssh_sftpd should not call functions in ssh_sftp!
 -export([info_to_attr/1, attr_to_info/1]).
+
+-export([dbg_trace/3]).
 
 -record(state,
 	{
@@ -121,7 +123,7 @@ start_channel(Cm, UserOptions) when is_pid(Cm) ->
     {_SshOpts, ChanOpts, SftpOpts} = handle_options(UserOptions),
     case ssh_xfer:attach(Cm, [], ChanOpts) of
 	{ok, ChannelId, Cm} ->
-	    case ssh_channel:start(Cm, ChannelId,
+	    case ssh_client_channel:start(Cm, ChannelId,
 				   ?MODULE, [Cm, ChannelId, SftpOpts]) of
 		{ok, Pid} ->
 		    case wait_for_version_negotiation(Pid, Timeout) of
@@ -149,7 +151,7 @@ start_channel(Host, Port, UserOptions) ->
                             proplists:get_value(timeout, SftpOpts, infinity)),
     case ssh_xfer:connect(Host, Port, SshOpts, ChanOpts, Timeout) of
 	{ok, ChannelId, Cm} ->
-	    case ssh_channel:start(Cm, ChannelId, ?MODULE, [Cm,ChannelId,SftpOpts]) of
+	    case ssh_client_channel:start(Cm, ChannelId, ?MODULE, [Cm,ChannelId,SftpOpts]) of
 		{ok, Pid} ->
 		    case wait_for_version_negotiation(Pid, Timeout) of
 			ok ->
@@ -169,21 +171,16 @@ start_channel(Host, Port, UserOptions) ->
 stop_channel(Pid) ->
     case is_process_alive(Pid) of
 	true ->
-	    OldValue = process_flag(trap_exit, true),
-	    link(Pid),
-	    exit(Pid, ssh_sftp_stop_channel),
-	    receive
-		{'EXIT', Pid, normal} ->
-		    ok
-	    after 5000 ->
-		    exit(Pid, kill),
-		    receive
-			{'EXIT', Pid, killed} ->
-			    ok
-		    end
-	    end,
-	    process_flag(trap_exit, OldValue),
-	    ok;
+            MonRef = erlang:monitor(process, Pid),
+            unlink(Pid),
+            exit(Pid, ssh_sftp_stop_channel),
+            receive {'DOWN',MonRef,_,_,_} -> ok
+            after
+                1000 ->
+                    exit(Pid, kill),
+                    erlang:demonitor(MonRef, [flush]),
+                    ok
+            end;
 	false ->
 	    ok
     end.
@@ -801,13 +798,22 @@ handle_ssh_msg({ssh_cm, _, {signal, _, _}}, State) ->
     %% Ignore signals according to RFC 4254 section 6.9.
     {ok, State};
 
-handle_ssh_msg({ssh_cm, _, {exit_signal, ChannelId, _, Error, _}},
+handle_ssh_msg({ssh_cm, _, {exit_signal, ChannelId, Signal, Error0, _}},
 	       State0) ->
+    Error =
+        case Error0 of
+            "" -> Signal;
+            _ -> Error0
+        end,
     State = reply_all(State0, {error, Error}),
     {stop, ChannelId,  State};
 
 handle_ssh_msg({ssh_cm, _, {exit_status, ChannelId, Status}}, State0) ->
-    State = reply_all(State0, {error, {exit_status, Status}}),
+    State = 
+        case State0 of
+            0 -> State0;
+            _ -> reply_all(State0, {error, {exit_status, Status}})
+        end,
     {stop, ChannelId, State}.
 
 %%--------------------------------------------------------------------
@@ -823,7 +829,7 @@ handle_msg({ssh_channel_up, _, _}, #state{opts = Options, xf = Xf} = State) ->
 %% Version negotiation timed out
 handle_msg({timeout, undefined, From},
 	   #state{xf = #ssh_xfer{channel = ChannelId}} = State) ->
-    ssh_channel:reply(From, {error, timeout}),
+    ssh_client_channel:reply(From, {error, timeout}),
     {stop, ChannelId, State};
 
 handle_msg({timeout, Id, From}, #state{req_list = ReqList0} = State) ->
@@ -832,7 +838,7 @@ handle_msg({timeout, Id, From}, #state{req_list = ReqList0} = State) ->
 	    {ok, State};
 	_ ->
 	    ReqList = lists:keydelete(Id, 1, ReqList0),
-	    ssh_channel:reply(From, {error, timeout}),
+	    ssh_client_channel:reply(From, {error, timeout}),
 	    {ok, State#state{req_list = ReqList}}
     end;
 
@@ -880,7 +886,7 @@ handle_options([Opt|Rest], Sftp, Chan, Ssh) ->
     handle_options(Rest, Sftp, Chan, [Opt|Ssh]).
 
 call(Pid, Msg, TimeOut) ->
-    ssh_channel:call(Pid, {{timeout, TimeOut}, Msg}, infinity).
+    ssh_client_channel:call(Pid, {{timeout, TimeOut}, Msg}, infinity).
 
 handle_reply(State, <<?UINT32(Len),Reply:Len/binary,Rest/binary>>) ->
     do_handle_reply(State, Reply, Rest);
@@ -899,7 +905,7 @@ do_handle_reply(#state{xf = Xf} = State,
 	       true ->
 		    ok
 	    end,
-	    ssh_channel:reply(From, ok)
+	    ssh_client_channel:reply(From, ok)
     end,
     State#state{xf = Xf#ssh_xfer{vsn = Version, ext = Ext}, rep_buf = Rest};
 
@@ -947,7 +953,7 @@ async_reply(ReqID, Reply, _From={To,_}, State) ->
     State.
 
 sync_reply(Reply, From, State) ->
-    catch (ssh_channel:reply(From, Reply)),
+    catch (ssh_client_channel:reply(From, Reply)),
     State.
 
 open2(OrigReqID,FileName,Handle,Mode,Async,From,State) ->
@@ -1460,3 +1466,21 @@ format_channel_start_error({shutdown, Reason}) ->
     Reason;
 format_channel_start_error(Reason) ->
     Reason.
+
+%%%################################################################
+%%%#
+%%%# Tracing
+%%%#
+
+dbg_trace(points,         _,  _) -> [terminate];
+
+dbg_trace(flags,  terminate,  _) -> [c];
+dbg_trace(on,     terminate,  _) -> dbg:tp(?MODULE,  terminate, 2, x);
+dbg_trace(off,    terminate,  _) -> dbg:ctpg(?MODULE, terminate, 2);
+dbg_trace(format, terminate, {call, {?MODULE,terminate, [Reason, State]}}) ->
+    ["Sftp Terminating:\n",
+     io_lib:format("Reason: ~p,~nState:~n~s", [Reason, wr_record(State)])
+    ].
+
+?wr_record(state).
+

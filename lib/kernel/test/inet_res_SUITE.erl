@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2009-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2009-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -46,15 +46,16 @@
 %% a temporary local nameserver BIND 8 or 9 that must be installed
 %% on your machine.
 %%
-%% For example, on Ubuntu 14.04, as root:
+%% For example, on Ubuntu 16.04 / 18.04, as root:
 %%     apt-get install bind9
 %% Now, that is not enough since Apparmor will not allow
 %% the nameserver daemon /usr/sbin/named to read from the test directory.
 %% Assuming that you run tests in /ldisk/daily_build, and still on
-%% Ubuntu 14.04, make /usr/apparmor.d/local/usr.sbin.named contain:
+%% Ubuntu 14.04, make /etc/apparmor.d/local/usr.sbin.named contain:
 %%     /ldisk/daily_build/** r,
 %% And yes; the trailing comma must be there...
-
+%% And yes; create the file if it does not exist.
+%% And yes; restart the apparmor daemon using "service apparmor restart"
 
 
 suite() ->
@@ -217,10 +218,10 @@ proxy_start(TC, {NS,P}) ->
 	spawn_link(
 	  fun () ->
 		  try proxy_start(TC, NS, P, Parent, Tag)
-		  catch C:X ->
+		  catch C:X:Stacktrace ->
 			  io:format(
 			    "~w: ~w:~p ~p~n",
-			    [self(),C,X,erlang:get_stacktrace()])
+			    [self(),C,X,Stacktrace])
 		  end
 	  end),
     receive {started,Tag,Port} ->
@@ -531,7 +532,7 @@ edns0(Config) when is_list(Config) ->
 		    case os:version() of
 			{M,V,_} when M < 5;  M == 5, V =< 8 ->
 			    %% In our test park only known platform
-			    %% with an DNS resolver that can not do
+			    %% with an DNS resolver that cannot do
 			    %% EDNS0.
 			    {comment,"No EDNS0"}
 		    end

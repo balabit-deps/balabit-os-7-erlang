@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -132,11 +132,12 @@ create_list_box(Panel, Holder, Callback, Owner) ->
 				       end}
 				     ]),
     Li = wxListItem:new(),
+    Scale = observer_wx:get_scale(),
     AddListEntry = fun({Name, Align, DefSize}, Col) ->
 			   wxListItem:setText(Li, Name),
 			   wxListItem:setAlign(Li, Align),
 			   wxListCtrl:insertColumn(ListCtrl, Col, Li),
-			   wxListCtrl:setColumnWidth(ListCtrl, Col, DefSize),
+			   wxListCtrl:setColumnWidth(ListCtrl, Col, DefSize*Scale),
 			   Col + 1
 		   end,
     ListItems = Callback:col_spec(),

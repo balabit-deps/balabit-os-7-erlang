@@ -72,13 +72,11 @@ also find the utilities needed for building the documentation.
     as the binary command program `openssl`. At least version 0.9.8 of OpenSSL is required.
     Read more and download from <http://www.openssl.org>.
 *   Oracle Java SE JDK -- The Java Development Kit (Standard Edition).
-    Required for building the application `jinterface` and parts of `ic` and `orber`.
+    Required for building the application `jinterface`.
     At least version 1.6.0 of the JDK is required.
 
     Download from <http://www.oracle.com/technetwork/java/javase/downloads>.
     We have also tested with IBM's JDK 1.6.0.
-*   X Windows -- Development headers and libraries are needed
-    to build the Erlang/OTP application `gs` on Unix/Linux.
 *   `flex` -- Headers and libraries are needed to build the flex
     scanner for the `megaco` application on Unix/Linux.
 *   wxWidgets -- Toolkit for GUI applications.
@@ -340,12 +338,8 @@ use the `--prefix` argument like this: `./configure --prefix=<Dir>`.
 Some of the available `configure` options are:
 
 *   `--prefix=PATH` - Specify installation prefix.
-*   `--enable-plain-emulator` - Build a threaded emulator that only
-    uses one scheduler. This emulator type is deprecated and will be
-    removed in a future release.
-*   `--disable-threads` - Build a non-threaded emulator. This emulator type
-    is deprecated and will be
-    removed in a future release.
+*   `--disable-parallel-configure` - Disable parallel execution of
+    `configure` scripts (parallel execution is enabled by default)
 *   `--{enable,disable}-kernel-poll` - Kernel poll support (enabled by
     default if possible)
 *   `--{enable,disable}-hipe` - HiPE support (enabled by default on supported
@@ -423,11 +417,6 @@ Some of the available `configure` options are:
     and scalability compared to the default clock sources chosen.
 *   `--disable-saved-compile-time` - Disable saving of compile date and time
     in the emulator binary.
-*   `--enable-dirty-schedulers` - Enable the **experimental** dirty schedulers
-    functionality. Note that the dirty schedulers functionality is experimental,
-    and **not supported**. This functionality **will** be subject to backward
-    incompatible changes. Note that you should **not** enable the dirty scheduler
-    functionality on production systems. It is only provided for testing.
 
 If you or your system has special requirements please read the `Makefile` for
 additional configuration information.
@@ -586,16 +575,12 @@ as before, but the build process will take a much longer time.
 
 After completing all the normal building steps described above a debug
 enabled runtime system can be built. To do this you have to change
-directory to `$ERL_TOP/erts/emulator`.
+directory to `$ERL_TOP/erts/emulator` and execute:
 
-In this directory execute:
+    $ (cd $ERL_TOP/erts/emulator && make debug)
 
-    $ make debug FLAVOR=$FLAVOR
-
-where `$FLAVOR` is either `plain` or `smp`. The flavor options will
-produce a beam.debug and beam.smp.debug executable respectively. The
-files are installed along side with the normal (opt) versions `beam.smp`
-and `beam`.
+This will produce a  beam.smp.debug executable. The
+file are installed along side with the normal (opt) version `beam.smp`.
 
 To start the debug enabled runtime system execute:
 
@@ -609,7 +594,7 @@ using appropriate configure options.
 There are other types of runtime systems that can be built as well
 using the similar steps just described.
 
-    $ make $TYPE FLAVOR=$FLAVOR
+    $ (cd $ERL_TOP/erts/emulator && make $TYPE)
 
 where `$TYPE` is `opt`, `gcov`, `gprof`, `debug`, `valgrind`, or `lcnt`.
 These different beam types are useful for debugging and profiling

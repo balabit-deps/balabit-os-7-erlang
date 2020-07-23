@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,8 +42,10 @@
 	 process_info_lock_reschedule2/1,
 	 process_info_lock_reschedule3/1,
          process_info_garbage_collection/1,
+         process_info_smoke_all/1,
+         process_info_status_handled_signal/1,
+         process_info_reductions/1,
 	 bump_reductions/1, low_prio/1, binary_owner/1, yield/1, yield2/1,
-	 process_status_exiting/1,
 	 otp_4725/1, bad_register/1, garbage_collect/1, otp_6237/1,
 	 process_info_messages/1, process_flag_badarg/1, process_flag_heap_size/1,
 	 spawn_opt_heap_size/1, spawn_opt_max_heap_size/1,
@@ -58,6 +60,7 @@
 	 no_priority_inversion2/1,
 	 system_task_blast/1,
 	 system_task_on_suspended/1,
+         system_task_failed_enqueue/1,
 	 gc_request_when_gc_disabled/1,
 	 gc_request_blast_when_gc_disabled/1]).
 -export([prio_server/2, prio_client/2, init/1, handle_event/2]).
@@ -80,7 +83,9 @@ all() ->
      process_info_lock_reschedule2,
      process_info_lock_reschedule3,
      process_info_garbage_collection,
-     process_status_exiting,
+     process_info_smoke_all,
+     process_info_status_handled_signal,
+     process_info_reductions,
      bump_reductions, low_prio, yield, yield2, otp_4725,
      bad_register, garbage_collect, process_info_messages,
      process_flag_badarg, process_flag_heap_size,
@@ -104,7 +109,7 @@ groups() ->
        otp_7738_resume]},
      {system_task, [],
       [no_priority_inversion, no_priority_inversion2,
-       system_task_blast, system_task_on_suspended,
+       system_task_blast, system_task_on_suspended, system_task_failed_enqueue,
        gc_request_when_gc_disabled, gc_request_blast_when_gc_disabled]}].
 
 init_per_suite(Config) ->
@@ -130,6 +135,15 @@ init_per_group(_GroupName, Config) ->
 end_per_group(_GroupName, Config) ->
     Config.
 
+init_per_testcase(Func, Config)
+  when Func =:= processes_default_tab;
+       Func =:= processes_this_tab ->
+    case erlang:system_info(debug_compiled) of
+        true ->
+            {skip, "Don't run in debug"};
+        false ->
+            [{testcase, Func} | Config]
+    end;
 init_per_testcase(Func, Config) when is_atom(Func), is_list(Config) ->
     [{testcase, Func}|Config].
 
@@ -512,14 +526,20 @@ pio_current_location(N, Pid, Pi, Looper) ->
     case Where of
 	{erlang,process_info,2,[]} ->
 	    pio_current_location(N-1, Pid, Pi+1, Looper);
+	{erts_internal,await_result,1, Loc} when is_list(Loc) ->
+	    pio_current_location(N-1, Pid, Pi+1, Looper);
 	{?MODULE,process_info_looper,1,Loc} when is_list(Loc) ->
-	    pio_current_location(N-1, Pid, Pi, Looper+1)
+	    pio_current_location(N-1, Pid, Pi, Looper+1);
+	_ ->
+	    exit({unexpected_location, Where})
     end.
 
 pio_current_stacktrace() ->
     L = [begin
-	     {current_stacktrace,Stk} = process_info(P, current_stacktrace),
-	     {P,Stk}
+	     case process_info(P, current_stacktrace) of
+                 {current_stacktrace, Stk} -> {P,Stk};
+                 undefined -> {P, []}
+             end
 	 end || P <- processes()],
     [erlang:garbage_collect(P) || {P,_} <- L],
     erlang:garbage_collect(),
@@ -841,28 +861,6 @@ process_info_lock_reschedule3(Config) when is_list(Config) ->
 		  ct:fail(BadStatus)
 	  end.
 
-process_status_exiting(Config) when is_list(Config) ->
-    %% Make sure that erts_debug:get_internal_state({process_status,P})
-    %% returns exiting if it is in status P_EXITING.
-    erts_debug:set_internal_state(available_internal_state,true),
-    Prio = process_flag(priority, max),
-    P = spawn_opt(fun () -> receive after infinity -> ok end end,
-			[{priority, normal}]),
-    erlang:yield(),
-    %% The tok_loop processes are here to make it hard for the exiting
-    %% process to be scheduled in for exit...
-    TokLoops = lists:map(fun (_) ->
-		spawn_opt(fun tok_loop/0,
-		    [link,{priority, high}])
-	end, lists:seq(1, erlang:system_info(schedulers_online))),
-    exit(P, boom),
-    wait_until(fun() ->
-		exiting =:= erts_debug:get_internal_state({process_status,P})
-	end),
-    lists:foreach(fun (Tok) -> unlink(Tok), exit(Tok,bang) end, TokLoops),
-    process_flag(priority, Prio),
-    ok.
-
 otp_4725(Config) when is_list(Config) ->
     Tester = self(),
     Ref1 = make_ref(),
@@ -997,10 +995,194 @@ process_info_garbage_collection(_Config) ->
 gv(Key,List) ->
     proplists:get_value(Key,List).
 
+process_info_smoke_all_tester() ->
+    register(process_info_smoke_all_tester, self()),
+    put(ets_ref, ets:new(blupp, [])),
+    put(binary, [list_to_binary(lists:duplicate(1000, 1)),
+                 list_to_binary(lists:duplicate(1000, 2))]),
+    process_info_smoke_all_tester_loop().
+
+process_info_smoke_all_tester_loop() ->
+    receive
+        {other_process, Pid} ->
+            case get(procs) of
+                undefined -> put(procs, [Pid]);
+                Procs -> put(procs, [Pid|Procs])
+            end,
+            erlang:monitor(process, Pid),
+            link(Pid),
+            process_info_smoke_all_tester_loop()
+    end.
+
+process_info_smoke_all(Config) when is_list(Config) ->
+    AllPIOptions = [registered_name,
+                    current_function,
+                    initial_call,
+                    messages,
+                    message_queue_len,
+                    links,
+                    monitors,
+                    monitored_by,
+                    dictionary,
+                    trap_exit,
+                    error_handler,
+                    heap_size,
+                    stack_size,
+                    memory,
+                    garbage_collection,
+                    group_leader,
+                    reductions,
+                    priority,
+                    trace,
+                    binary,
+                    sequential_trace_token,
+                    catchlevel,
+                    backtrace,
+                    last_calls,
+                    total_heap_size,
+                    suspending,
+                    min_heap_size,
+                    min_bin_vheap_size,
+                    max_heap_size,
+                    current_location,
+                    current_stacktrace,
+                    message_queue_data,
+                    garbage_collection_info,
+                    magic_ref,
+                    fullsweep_after],
+
+    {ok, Node} = start_node(Config, ""),
+    RP = spawn_link(Node, fun process_info_smoke_all_tester/0),
+    LP = spawn_link(fun process_info_smoke_all_tester/0),
+    RP ! {other_process, LP},
+    LP ! {other_process, RP},
+    LP ! {other_process, self()},
+    LP ! ets:new(blapp, []),
+    LP ! ets:new(blipp, []),
+    LP ! list_to_binary(lists:duplicate(1000, 3)),
+    receive after 1000 -> ok end,
+    _MLP = erlang:monitor(process, LP),
+    true = is_process_alive(LP),
+    PI = process_info(LP, AllPIOptions),
+    io:format("~p~n", [PI]),
+    garbage_collect(),
+    unlink(RP),
+    unlink(LP),
+    exit(RP, kill),
+    exit(LP, kill),
+    false = is_process_alive(LP),
+    stop_node(Node),
+    ok.
+
+process_info_status_handled_signal(Config) when is_list(Config) ->
+    P = spawn_link(fun () ->
+                           receive after infinity -> ok end
+                   end),
+    wait_until(fun () ->
+                       process_info(P, status) == {status, waiting}
+               end),
+    %%
+    %% The 'messages' option will force a process-info-request
+    %% signal to be scheduled on the process. Ensure that status
+    %% 'waiting' is reported even though it is actually running
+    %% when handling the request. We want it to report the status
+    %% it would have had if it had not been handling the
+    %% process-info-request...
+    %%
+    [{status, waiting}, {messages, []}] = process_info(P, [status, messages]),
+    unlink(P),
+    exit(P, kill),
+    false = erlang:is_process_alive(P),
+    ok.
+
+%% OTP-15709
+%% Provoke a bug where process_info(reductions) returned wrong result
+%% because REDS_IN (def_arg_reg[5]) is read when the process in not running.
+%%
+%% And a bug where process_info(reductions) on a process which was releasing its
+%% main lock during execution could result in negative reduction diffs.
+process_info_reductions(Config) when is_list(Config) ->
+    {S1, S2} = case erlang:system_info(schedulers) of
+                   1 -> {1,1};
+                   _ -> {1,2}
+               end,
+    io:format("Run on schedulers ~p and ~p\n", [S1,S2]),
+    Boss = self(),
+    Doer = spawn_opt(fun () ->
+                             pi_reductions_tester(true, 10, fun pi_reductions_spinnloop/0, S2),
+                             pi_reductions_tester(true, 10, fun pi_reductions_recvloop/0, S2),
+                             pi_reductions_tester(false, 100, fun pi_reductions_main_unlocker/0, S2),
+                             Boss ! {self(), done}
+                     end,
+                     [link, {scheduler, S1}]),
+
+    {Doer, done} = receive M -> M end,
+    ok.
+
+pi_reductions_tester(ForceSignal, MaxCalls, Fun, S2) ->
+    Pid = spawn_opt(Fun, [link, {scheduler,S2}]),
+    Extra = case ForceSignal of
+                true ->
+                    %% Add another item that force sending the request
+                    %% as a signal, like 'current_function'.
+                    [current_function];
+                false ->
+                    []
+            end,
+    LoopFun = fun Me(Calls, Prev, Acc0) ->
+                      PI = process_info(Pid, [reductions | Extra]),
+                      [{reductions,Reds} | _] = PI,
+                      Diff = Reds - Prev,
+                      %% Verify we get sane non-negative reduction diffs
+                      {Diff, true} = {Diff, (Diff >= 0)},
+                      {Diff, true} = {Diff, (Diff =< 1000*1000)},
+                      Acc1 = [Diff | Acc0],
+                      case Calls >= MaxCalls of
+                          true -> Acc1;
+                          false -> Me(Calls+1, Reds, Acc1)
+                      end
+              end,
+    DiffList = LoopFun(0, 0, []),
+    unlink(Pid),
+    exit(Pid,kill),
+    io:format("Reduction diffs: ~p\n", [lists:reverse(DiffList)]),
+    ok.
+
+pi_reductions_spinnloop() ->
+    %% 6 args to make use of def_arg_reg[5] which is also used as REDS_IN
+    pi_reductions_spinnloop(999*1000, atom, "hej", self(), make_ref(), 3.14).
+
+pi_reductions_spinnloop(N,A,B,C,D,E) when N > 0 ->
+    pi_reductions_spinnloop(N-1,B,C,D,E,A);
+pi_reductions_spinnloop(0,_,_,_,_,_) ->
+    %% Stop to limit max number of reductions consumed
+    pi_reductions_recvloop().
+
+pi_reductions_recvloop() ->
+    receive
+        "a free lunch" -> false
+    end.
+
+pi_reductions_main_unlocker() ->
+    Other = spawn_link(fun() -> receive die -> ok end end),
+    pi_reductions_main_unlocker_loop(Other).
+
+pi_reductions_main_unlocker_loop(Other) ->
+    %% Assumption: register(OtherPid, Name) will unlock main lock of calling
+    %% process during execution.
+    register(pi_reductions_main_unlocker, Other),
+    unregister(pi_reductions_main_unlocker),
+
+    %% Yield in order to increase probability of process_info sometimes probing
+    %% this process when it's not RUNNING.
+    erlang:yield(),
+    pi_reductions_main_unlocker_loop(Other).
+
+
 %% Tests erlang:bump_reductions/1.
 bump_reductions(Config) when is_list(Config) ->
     erlang:garbage_collect(),
-    receive after 1 -> ok end,		% Clear reductions.
+    erlang:yield(),		% Clear reductions.
     {reductions,R1} = process_info(self(), reductions),
     true = erlang:bump_reductions(100),
     {reductions,R2} = process_info(self(), reductions),
@@ -2017,6 +2199,13 @@ spawn_opt_max_heap_size(_Config) ->
 
     error_logger:add_report_handler(?MODULE, self()),
 
+    %% flush any prior messages in error_logger
+    Pid = spawn(fun() -> ok = nok end),
+    receive
+        {error, _, {emulator, _, [Pid|_]}} ->
+            flush()
+    end,
+
     %% Test that numerical limit works
     max_heap_size_test(1024, 1024, true, true),
 
@@ -2121,6 +2310,13 @@ receive_unexpected() ->
             ok
     end.
 
+flush() ->
+    receive
+        _M -> flush()
+    after 0 ->
+            ok
+    end.
+
 %% error_logger report handler proxy
 init(Pid) ->
     {ok, Pid}.
@@ -2131,36 +2327,46 @@ handle_event(Event, Pid) ->
 
 processes_term_proc_list(Config) when is_list(Config) ->
     Tester = self(),
-    as_expected = processes_term_proc_list_test(false),
-    {ok, Node} = start_node(Config, "+Mis true"),
-    RT = spawn_link(Node, fun () ->
-		receive after 1000 -> ok end,
-		processes_term_proc_list_test(false),
-		Tester ! {it_worked, self()}
-	end),
-    receive {it_worked, RT} -> ok end,
-    stop_node(Node),
+
+    Run = fun(Args) ->
+              {ok, Node} = start_node(Config, Args),
+              RT = spawn_link(Node, fun () ->
+                              receive after 1000 -> ok end,
+                              as_expected = processes_term_proc_list_test(false),
+                              Tester ! {it_worked, self()}
+                      end),
+              receive {it_worked, RT} -> ok end,
+              stop_node(Node)
+          end,
+
+    %% We have to run this test case with +S1 since instrument:allocations()
+    %% will report a free()'d block as present until it's actually deallocated
+    %% by its employer.
+    Run("+MSe true +Muatags false +S1"),
+    Run("+MSe true +Muatags true +S1"),
+
     ok.
-    
+
 -define(CHK_TERM_PROC_LIST(MC, XB),
 	chk_term_proc_list(?LINE, MC, XB)).
 
 chk_term_proc_list(Line, MustChk, ExpectBlks) ->
-    case {MustChk, instrument:memory_status(types)} of
-	{false, false} ->
+    Allocs = instrument:allocations(),
+    case {MustChk, Allocs} of
+	{false, {error, not_enabled}} ->
 	    not_enabled;
-	{_, MS} ->
-	    {value,
-	     {ptab_list_deleted_el,
-	      DL}} = lists:keysearch(ptab_list_deleted_el, 1, MS),
-	    case lists:keysearch(blocks, 1, DL) of
-		{value, {blocks, ExpectBlks, _, _}} ->
-		    ok;
-		{value, {blocks, Blks, _, _}} ->
-		    exit({line, Line,
-			  mismatch, expected, ExpectBlks, actual, Blks});
-		Unexpected ->
-		    exit(Unexpected)
+	{false, {ok, {_Shift, _Unscanned, ByOrigin}}} when ByOrigin =:= #{} ->
+	    not_enabled;
+	{_, {ok, {_Shift, _Unscanned, ByOrigin}}} ->
+            ByType = maps:get(system, ByOrigin, #{}),
+            Hist = maps:get(ptab_list_deleted_el, ByType, {}),
+	    case lists:sum(tuple_to_list(Hist)) of
+		ExpectBlks ->
+                    ok;
+		Blks ->
+                    exit({line, Line, mismatch,
+                          expected, ExpectBlks,
+                          actual, Blks})
 	    end
     end,
     ok.
@@ -2394,14 +2600,20 @@ garb_other_running(Config) when is_list(Config) ->
 
 no_priority_inversion(Config) when is_list(Config) ->
     Prio = process_flag(priority, max),
-    HTLs = lists:map(fun (_) ->
+    Master = self(),
+    Executing = make_ref(),
+    HTLs = lists:map(fun (Sched) ->
 			     spawn_opt(fun () ->
+                                               Master ! {self(), Executing},
 					       tok_loop()
 				       end,
-				       [{priority, high}, monitor, link])
+				       [{priority, high},
+                                        {scheduler, Sched},
+                                        monitor,
+                                        link])
 		     end,
-		     lists:seq(1, 2*erlang:system_info(schedulers))),
-    receive after 500 -> ok end,
+		     lists:seq(1, erlang:system_info(schedulers_online))),
+    lists:foreach(fun ({P, _}) -> receive {P,Executing} -> ok end end, HTLs),
     LTL = spawn_opt(fun () ->
 			    tok_loop()
 		    end,
@@ -2423,14 +2635,19 @@ no_priority_inversion(Config) when is_list(Config) ->
 
 no_priority_inversion2(Config) when is_list(Config) ->
     Prio = process_flag(priority, max),
-    MTLs = lists:map(fun (_) ->
+    Master = self(),
+    Executing = make_ref(),
+    MTLs = lists:map(fun (Sched) ->
 			     spawn_opt(fun () ->
+                                               Master ! {self(), Executing},
 					       tok_loop()
 				       end,
-				       [{priority, max}, monitor, link])
+				       [{priority, max},
+                                        {scheduler, Sched},
+                                        monitor, link])
 		     end,
-		     lists:seq(1, 2*erlang:system_info(schedulers))),
-    receive after 2000 -> ok end,
+		     lists:seq(1, erlang:system_info(schedulers_online))),
+    lists:foreach(fun ({P, _}) -> receive {P,Executing} -> ok end end, MTLs),
     {PL, ML} = spawn_opt(fun () ->
 			       tok_loop()
 		       end,
@@ -2530,6 +2747,57 @@ system_task_on_suspended(Config) when is_list(Config) ->
 	{'DOWN', M, process, P, killed} ->
 	    ok
     end.
+
+%% When a system task couldn't be enqueued due to the process being in an
+%% incompatible state, it would linger in the system task list and get executed
+%% anyway the next time the process was scheduled. This would result in a
+%% double-free at best.
+%%
+%% This test continuously purges modules while other processes run dirty code,
+%% which will provoke this error as ERTS_PSTT_CPC can't be enqueued while a
+%% process is running dirty code.
+system_task_failed_enqueue(Config) when is_list(Config) ->
+    case erlang:system_info(dirty_cpu_schedulers) of
+        N when N > 0 ->
+            system_task_failed_enqueue_1(Config);
+        _ ->
+            {skipped, "No dirty scheduler support"}
+    end.
+
+system_task_failed_enqueue_1(Config) ->
+    Priv = proplists:get_value(priv_dir, Config),
+
+    Purgers = [spawn_link(fun() -> purge_loop(Priv, Id) end)
+               || Id <- lists:seq(1, erlang:system_info(schedulers))],
+    Hogs = [spawn_link(fun() -> dirty_loop() end)
+            || _ <- lists:seq(1, erlang:system_info(dirty_cpu_schedulers))],
+
+    ct:sleep(5000),
+
+    [begin
+         unlink(Pid),
+         exit(Pid, kill)
+     end || Pid <- (Purgers ++ Hogs)],
+
+    ok.
+
+purge_loop(PrivDir, Id) ->
+    Mod = "failed_enq_" ++ integer_to_list(Id),
+    Path = PrivDir ++ "/" ++ Mod,
+    file:write_file(Path ++ ".erl",
+                    "-module('" ++ Mod ++ "').\n" ++
+                        "-export([t/0]).\n" ++
+                        "t() -> ok."),
+    purge_loop_1(Path).
+purge_loop_1(Path) ->
+    {ok, Mod} = compile:file(Path, []),
+    erlang:delete_module(Mod),
+    erts_code_purger:purge(Mod),
+    purge_loop_1(Path).
+
+dirty_loop() ->
+    ok = erts_debug:dirty_cpu(reschedule, 10000),
+    dirty_loop().
 
 gc_request_when_gc_disabled(Config) when is_list(Config) ->
     AIS = erts_debug:set_internal_state(available_internal_state, true),

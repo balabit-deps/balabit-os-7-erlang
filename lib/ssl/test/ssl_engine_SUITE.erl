@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -39,23 +39,35 @@ init_per_suite(Config) ->
     catch crypto:stop(),
     try crypto:start() of
 	ok ->
-            ssl_test_lib:clean_start(),
-            case crypto:get_test_engine() of
-                 {ok, EngineName} ->
-                    try crypto:engine_load(<<"dynamic">>,
-                                            [{<<"SO_PATH">>, EngineName},
-                                             <<"LOAD">>],
-                                            []) of
-                        {ok, Engine} ->
-                            [{engine, Engine} |Config];
-                        {error, Reason} ->
-                            ct:pal("Reason ~p", [Reason]),
-                            {skip, "No dynamic engine support"}
-                    catch error:notsup ->
-                            {skip, "No engine support in OpenSSL"}    
-                    end;
-                {error, notexist} ->
-                    {skip, "Test engine not found"}
+            case crypto:info_lib() of
+                [{_,_, <<"OpenSSL 1.0.1s-freebsd  1 Mar 2016">>}] ->
+                    {skip, "Problem with engine on OpenSSL 1.0.1s-freebsd"};
+                _ ->
+                    ssl_test_lib:clean_start(),
+                    case crypto:get_test_engine() of
+                         {ok, EngineName} ->
+                            try
+                                %% The test engine has it's own fake rsa sign/verify that
+                                %% you don't want to use, so exclude it from methods to load:
+                                Methods = 
+                                    crypto:engine_get_all_methods() -- [engine_method_rsa],
+                                crypto:engine_load(<<"dynamic">>,
+                                                   [{<<"SO_PATH">>, EngineName},
+                                                    <<"LOAD">>],
+                                                   [],
+                                                   Methods)
+                            of
+                                {ok, Engine} ->
+                                    [{engine, Engine} |Config];
+                                {error, Reason} ->
+                                    ct:pal("Reason ~p", [Reason]),
+                                    {skip, "No dynamic engine support"}
+                            catch error:notsup ->
+                                    {skip, "No engine support in OpenSSL"}    
+                            end;
+                        {error, notexist} ->
+                            {skip, "Test engine not found"}
+                    end
             end
     catch _:_ ->
 	    {skip, "Crypto did not start"}
@@ -85,12 +97,14 @@ end_per_testcase(_TestCase, Config) ->
 private_key(Config) when is_list(Config) ->
     ClientFileBase = filename:join([proplists:get_value(priv_dir, Config), "client_engine"]),
     ServerFileBase = filename:join([proplists:get_value(priv_dir, Config), "server_engine"]),
+    Ext = x509_test:extensions([{key_usage, [digitalSignature, keyEncipherment]}]),
     #{server_config := ServerConf,
       client_config := ClientConf} = GenCertData =
         public_key:pkix_test_data(#{server_chain => 
                                         #{root => [{key, ssl_test_lib:hardcode_rsa_key(1)}],
                                           intermediates => [[{key, ssl_test_lib:hardcode_rsa_key(2)}]],
-                                          peer => [{key, ssl_test_lib:hardcode_rsa_key(3)}
+                                          peer => [{extensions, Ext},
+                                                   {key, ssl_test_lib:hardcode_rsa_key(3)}
                                                   ]},
                                     client_chain => 
                                         #{root => [{key, ssl_test_lib:hardcode_rsa_key(4)}],
@@ -112,8 +126,29 @@ private_key(Config) when is_list(Config) ->
     EngineServerConf = [{key, #{algorithm => rsa,
                                 engine => Engine,
                                 key_id => ServerKey}} | proplists:delete(key, ServerConf)],
+
+    EngineFileClientConf = [{key, #{algorithm => rsa,
+                                    engine => Engine,
+                                    key_id => ClientKey}} | 
+                            proplists:delete(keyfile, FileClientConf)],
+    
+    EngineFileServerConf = [{key, #{algorithm => rsa,
+                                    engine => Engine,
+                                    key_id => ServerKey}} | 
+                            proplists:delete(keyfile, FileServerConf)],
+
     %% Test with engine
     test_tls_connection(EngineServerConf, EngineClientConf, Config),
+    
+    %% Test with engine and rsa keyexchange
+    RSASuites = all_kex_rsa_suites([{tls_version, 'tlsv1.2'} | Config]),
+    
+    test_tls_connection([{ciphers, RSASuites}, {versions, ['tlsv1.2']} | EngineServerConf], 
+                        [{ciphers, RSASuites}, {versions, ['tlsv1.2']} | EngineClientConf], Config),
+    
+    %% Test with engine and present file arugments
+    test_tls_connection(EngineFileServerConf, EngineFileClientConf, Config),
+    
     %% Test that sofware fallback is available
     test_tls_connection(ServerConf, [{reuse_sessions, false} |ClientConf], Config).
     
@@ -140,3 +175,8 @@ test_tls_connection(ServerConf, ClientConf, Config) ->
     ssl_test_lib:check_result(Server, ok, Client, ok),
     ssl_test_lib:close(Server),
     ssl_test_lib:close(Client).
+
+all_kex_rsa_suites(Config) ->
+    Version = proplists:get_value(tls_version, Config),
+    All = ssl:cipher_suites(all, Version),
+    ssl:filter_cipher_suites(All,[{key_exchange, fun(rsa) -> true;(_) -> false end}]).

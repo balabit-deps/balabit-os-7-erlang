@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -29,15 +29,13 @@
 %% Note: This directive should only be used in test suites.
 -compile(export_all).
 
--define(TIMEOUT, 35000).
-
 %%--------------------------------------------------------------------
 %% Common Test interface functions -----------------------------------
 %%--------------------------------------------------------------------
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
-     {timetrap,{seconds,40}}].
+     {timetrap,{seconds,60}}].
 
 all() -> 
     %% [{group,kex},{group,cipher}... etc
@@ -90,7 +88,7 @@ init_per_suite(Config) ->
 		  " -- Max num algorithms: ~p~n"
 		 ,[os:getenv("HOME"),
 		   init:get_argument(home),
-		   os:cmd("ssh -V"),
+		   ssh_test_lib:installed_ssh_version("TIMEOUT"),
 		   ssh:default_algorithms(),
 		   crypto:info_lib(),
 		   ssh_test_lib:default_algorithms(sshc),
@@ -102,7 +100,7 @@ init_per_suite(Config) ->
 	   ct:log("all() ->~n    ~p.~n~ngroups()->~n    ~p.~n",[all(),groups()]),
 	   ssh:start(),
 	   [{std_simple_sftp_size,25000} % Sftp transferred data size
-	    | setup_pubkey(Config)]
+	    | Config]
        end
       ).
 
@@ -186,12 +184,15 @@ init_per_testcase(TC, {public_key,Alg}, Config) ->
                                 | ExtraOpts],
                                 [{extra_daemon,true}|Config]);
         {{ok,_}, {error,Err}} ->
+            ct:log("Alg = ~p~nOpts = ~p",[Alg,Opts]),
             {skip, io_lib:format("No host key: ~p",[Err])};
         
         {{error,Err}, {ok,_}} ->
+            ct:log("Alg = ~p~nOpts = ~p",[Alg,Opts]),
             {skip, io_lib:format("No user key: ~p",[Err])};
         
         _ ->
+            ct:log("Alg = ~p~nOpts = ~p",[Alg,Opts]),
             {skip, "Neither host nor user key"}
     end;
 
@@ -259,15 +260,14 @@ try_exec_simple_group(Group, Config) ->
     of
 	_ -> ct:fail("Exec though no group available")
     catch
-	error:{badmatch,{error,"No possible diffie-hellman-group-exchange group found"}} -> ok;
-	error:{badmatch,{error,"Connection closed"}} -> ok
+        error:{badmatch,{error,"Key exchange failed"}} -> ok
     end.
 
 %%--------------------------------------------------------------------
 %% Testing all default groups
 
 simple_exec_groups() ->
-    [{timetrap,{seconds,120}}].
+    [{timetrap,{seconds,180}}].
     
 simple_exec_groups(Config) ->
     Sizes = interpolate( public_key:dh_gex_group_sizes() ),
@@ -318,10 +318,10 @@ sshc_simple_exec_os_cmd(Config) ->
 		    ok;
 		false ->
 		    ct:log("Bad result: ~p~nExpected: ~p~nMangled result: ~p", [RawResult,Expect,Lines]),
-		    {fail, "Bad result"}
+		    {fail, "Bad result (see log in testcase)"}
 	    end
     after ?TIMEOUT ->
-	    ct:fail("Did not receive answer")
+	    ct:fail("Did not receive answer (timeout)")
     end.
 
 %%--------------------------------------------------------------------
@@ -462,17 +462,6 @@ pubkey_opts(Config) ->
      {system_dir, SystemDir}].
 
 
-setup_pubkey(Config) ->
-    DataDir = proplists:get_value(data_dir, Config),
-    UserDir = proplists:get_value(priv_dir, Config),
-    Keys =
-        [ssh_test_lib:setup_dsa(DataDir, UserDir),
-         ssh_test_lib:setup_rsa(DataDir, UserDir),
-         ssh_test_lib:setup_ecdsa("256", DataDir, UserDir)
-        ],
-    ssh_test_lib:write_auth_keys(Keys, UserDir), % 'authorized_keys' shall contain ALL pub keys
-    Config.
-
 setup_pubkey(Alg, Config) ->
     DataDir = proplists:get_value(data_dir, Config),
     UserDir = proplists:get_value(priv_dir, Config),
@@ -484,7 +473,9 @@ setup_pubkey(Alg, Config) ->
         'rsa-sha2-512' -> ssh_test_lib:setup_rsa(DataDir, UserDir);
         'ecdsa-sha2-nistp256' -> ssh_test_lib:setup_ecdsa("256", DataDir, UserDir);
         'ecdsa-sha2-nistp384' -> ssh_test_lib:setup_ecdsa("384", DataDir, UserDir);
-        'ecdsa-sha2-nistp521' -> ssh_test_lib:setup_ecdsa("521", DataDir, UserDir)
+        'ecdsa-sha2-nistp521' -> ssh_test_lib:setup_ecdsa("521", DataDir, UserDir);
+        'ssh-ed25519' -> ssh_test_lib:setup_eddsa(ed25519, DataDir, UserDir);
+        'ssh-ed448'   -> ssh_test_lib:setup_eddsa(ed448, DataDir, UserDir)
     end,
     Config.
 

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2002-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -94,7 +94,7 @@ sys_info() ->
      {port_limit, erlang:system_info(port_limit)},
      {port_count, erlang:system_info(port_count)},
      {ets_limit,  erlang:system_info(ets_limit)},
-     {ets_count, length(ets:all())},
+     {ets_count, erlang:system_info(ets_count)},
      {dist_buf_busy_limit, erlang:system_info(dist_buf_busy_limit)}
      | MemInfo].
 
@@ -279,7 +279,7 @@ get_table_list(mnesia, Opts) ->
 			     end,
 		       [Tab|Acc]
 		   catch _:_What ->
-			   %% io:format("Skipped ~p: ~p ~p ~n",[Id, _What, erlang:get_stacktrace()]),
+			   %% io:format("Skipped ~p: ~p ~p ~n",[Id, _What, Stacktrace]),
 			   Acc
 		   end
 	   end,
@@ -293,7 +293,7 @@ fetch_stats_loop(Parent, Time) ->
     erlang:system_flag(scheduler_wall_time, true),
     receive
 	_Msg ->
-	    %% erlang:system_flag(scheduler_wall_time, false)
+	    erlang:system_flag(scheduler_wall_time, false),
 	    ok
     after Time ->
 	    _M = Parent ! {stats, 1,
@@ -340,7 +340,6 @@ etop_collect(Collector) ->
 
     case SchedulerWallTime of
 	undefined ->
-            erlang:system_flag(scheduler_wall_time,true),
             spawn(fun() -> flag_holder_proc(Collector) end),
             ok;
 	_ ->
@@ -348,10 +347,11 @@ etop_collect(Collector) ->
     end.
 
 flag_holder_proc(Collector) ->
+    erlang:system_flag(scheduler_wall_time,true),
     Ref = erlang:monitor(process,Collector),
     receive
 	{'DOWN',Ref,_,_,_} ->
-	    %% erlang:system_flag(scheduler_wall_time,false)
+	    erlang:system_flag(scheduler_wall_time,false),
 	    ok
     end.
 

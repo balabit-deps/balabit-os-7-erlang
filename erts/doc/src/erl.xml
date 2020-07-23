@@ -4,7 +4,7 @@
 <comref>
   <header>
     <copyright>
-      <year>1996</year><year>2017</year>
+      <year>1996</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -360,11 +360,12 @@
       </item>
       <tag><c><![CDATA[-mode interactive | embedded]]></c></tag>
       <item>
-        <p>Indicates if the system is to load code dynamically
-          (<c><![CDATA[interactive]]></c>), or if all code is to be loaded
-          during system initialization (<c><![CDATA[embedded]]></c>); see
-          <seealso marker="kernel:code"><c>code(3)</c></seealso>.
-          Defaults to <c><![CDATA[interactive]]></c>.</p>
+        <p>Modules are auto loaded when they are first referenced if the
+          runtime system runs in <c><![CDATA[interactive]]></c> mode, which is
+          the default. In <c><![CDATA[embedded]]></c> mode modules are not auto
+          loaded. The latter is recommended when the boot script preloads all
+          modules, as conventionally happens in OTP releases. See
+          <seealso marker="kernel:code"><c>code(3)</c></seealso></p>.
       </item>
       <tag><c><![CDATA[-name Name]]></c></tag>
       <item>
@@ -459,11 +460,14 @@
       <tag><c><![CDATA[-remsh Node]]></c></tag>
       <item>
         <p>Starts Erlang with a remote shell connected to
-          <c><![CDATA[Node]]></c>.</p>
+          <c><![CDATA[Node]]></c>. Requires either <c><![CDATA[-name]]></c>
+          or <c><![CDATA[-sname]]></c> to be given. If <c><![CDATA[Node]]></c>
+          does not contain a hostname, one is automatically taken from
+          <c><![CDATA[-name]]></c> or <c><![CDATA[-sname]]></c></p>
       </item>
       <tag><c><![CDATA[-rsh Program]]></c></tag>
       <item>
-        <p>Specifies an alternative to <c><![CDATA[rsh]]></c> for starting a
+        <p>Specifies an alternative to <c><![CDATA[ssh]]></c> for starting a
           slave node on a remote host; see
           <seealso marker="stdlib:slave"><c>slave(3)</c></seealso>.</p>
       </item>
@@ -538,20 +542,6 @@
         <p>Note that a distributed node will fail to start if epmd is
           not running.</p>
       </item>
-      <tag><marker id="smp"/><c><![CDATA[-smp [enable|auto|disable]]]></c></tag>
-      <item>
-        <p><c>-smp enable</c> and <c>-smp</c> start the Erlang runtime
-	  system with SMP support enabled. This can fail if no runtime
-	  system with SMP support is available. <c>-smp auto</c> starts
-	  the Erlang runtime system with SMP support enabled if it is
-	  available and more than one logical processor is detected.
-	  <c>-smp disable</c> starts a runtime system without SMP support.
-           The runtime system without SMP support is deprecated and will
-           be removed in a future major release.</p>
-        <note>
-          <p>See also flag<seealso marker="#+S"><c>+S</c></seealso>.</p>
-        </note>
-      </item>
       <tag><c><![CDATA[-version]]></c> (emulator flag)</tag>
       <item>
         <p>Makes the emulator print its version number. The same
@@ -585,7 +575,7 @@
       <tag><marker id="async_thread_pool_size"/><c><![CDATA[+A size]]></c></tag>
       <item>
         <p>Sets the number of threads in async thread pool. Valid range
-          is 0-1024. Defaults to 10 if thread support is available.</p>
+          is 0-1024. Defaults to 1.</p>
       </item>
       <tag><c><![CDATA[+B [c | d | i]]]></c></tag>
       <item>
@@ -644,14 +634,39 @@
           of process heaps is destroyed by the crash dump generation.</p>
         <p>Option <c>+d</c> instructs the emulator to produce only a
           core dump and no crash dump if an internal error is detected.</p>
-        <p>Calling <seealso marker="erlang:halt/1">
+        <p>Calling <seealso marker="erlang#halt/1">
           <c>erlang:halt/1</c></seealso> with a string argument still
           produces a crash dump. On Unix systems, sending an emulator process
           a <c>SIGUSR1</c> signal also forces a crash dump.</p>
       </item>
+      <tag><marker id="+dcg"/><c><![CDATA[+rg DecentralizedCounterGroupsLimit]]></c></tag>
+      <item>
+        <p>Limits the number of decentralized counter groups used by
+           decentralized counters optimized for update operations in the
+           Erlang runtime system. By default, the limit is 256.</p>
+        <p>When the number of schedulers is less than or equal to the
+           limit, each scheduler has its own group. When the
+           number of schedulers is larger than the groups limit,
+           schedulers share groups. Shared groups degrade
+           the performance for updating counters while many reader groups
+           degrade the performance for reading counters. So, the limit is a tradeoff
+           between performance for update operations and performance for
+           read operations. Each group consumes 64 bytes in each
+           counter.</p>
+        <p>Notice that a runtime system using decentralized
+           counter groups benefits from <seealso marker="#+sbt">binding
+           schedulers to logical processors</seealso>, as the groups are
+           distributed better between schedulers with this option.</p>
+        <p>This option only affects decentralized counters used for
+           the counters that are keeping track of the memory consumption
+           and the number of terms in ETS tables of type ordered_set with
+           the write_concurrency option activated.</p>
+      </item>
       <tag><marker id="+e"/><c><![CDATA[+e Number]]></c></tag>
       <item>
-        <p>Sets the maximum number of ETS tables.</p>
+        <p>Sets the maximum number of ETS tables. This limit is
+	<seealso marker="stdlib:ets#max_ets_tables">partially obsolete</seealso>.
+	</p>
       </item>
       <tag><c><![CDATA[+ec]]></c></tag>
       <item>
@@ -776,13 +791,40 @@
           <seealso marker="erlang#process_flag_message_queue_data">
           <c>process_flag(message_queue_data, MQD)</c></seealso>.</p>
       </item>
-      <tag><c><![CDATA[+K true | false]]></c></tag>
+      <tag><marker id="+IOp"/><c>+IOp PollSets</c></tag>
       <item>
-        <p>Enables or disables the kernel poll functionality if supported by
-          the emulator. Defaults to <c><![CDATA[false]]></c> (disabled).
-          If the emulator does not support kernel poll, and flag
-          <c><![CDATA[+K]]></c> is passed to the emulator, a warning is
-          issued at startup.</p>
+        <p>Sets the number of IO pollsets to use when polling for I/O.
+          This option is only used on platforms that support concurrent
+          updates of a pollset, otherwise the same number of pollsets
+          are used as IO poll threads.
+          The default is 1.
+        </p>
+      </item>
+      <tag><marker id="+IOt"/><c>+IOt PollThreads</c></tag>
+      <item>
+        <p>Sets the number of IO poll threads to use when polling for I/O.
+          The maximum number of poll threads allowed is 1024. The default is 1.
+        </p>
+        <p>A good way to check if more IO poll threads are needed is to use
+          <seealso marker="runtime_tools:msacc">microstate accounting</seealso>
+          and see what the load of the IO poll thread is. If it is high it could
+          be a good idea to add more threads.</p>
+      </item>
+      <tag><marker id="+IOPp"/><c>+IOPp PollSetsPercentage</c></tag>
+      <item>
+        <p>Similar to <seealso marker="#+IOp"><c>+IOp</c></seealso> but uses
+          percentages to set the number of IO pollsets to create, based on the
+          number of poll threads configured. If both <c>+IOPp</c> and <c>+IOp</c>
+          are used, <c>+IOPp</c> is ignored.
+        </p>
+      </item>
+      <tag><marker id="+IOPt"/><c>+IOPt PollThreadsPercentage</c></tag>
+      <item>
+        <p>Similar to <seealso marker="#+IOt"><c>+IOt</c></seealso> but uses
+          percentages to set the number of IO poll threads to create, based on
+          the number of schedulers configured. If both <c>+IOPt</c> and
+          <c>+IOt</c> are used, <c>+IOPt</c> is ignored.
+        </p>
       </item>
       <tag><c><![CDATA[+l]]></c></tag>
       <item>
@@ -902,7 +944,7 @@
         <c><![CDATA[+S Schedulers:SchedulerOnline]]></c></tag>
       <item>
         <p>Sets the number of scheduler threads to create and scheduler threads
-          to set online when SMP support has been enabled. The maximum for both
+          to set online. The maximum for both
           values is 1024. If the Erlang runtime system is able to determine the
           number of logical processors configured and logical processors
           available, <c>Schedulers</c> defaults to logical processors
@@ -920,8 +962,6 @@
         <p>Specifying value <c>0</c> for <c>Schedulers</c> or
           <c>SchedulersOnline</c> resets the number of scheduler threads or
           scheduler threads online, respectively, to its default value.</p>
-        <p>This option is ignored if the emulator does not have SMP support
-          enabled (see flag <seealso marker="#smp"><c>-smp</c></seealso>).</p>
       </item>
       <tag><marker id="+SP"/><c><![CDATA[+SP
         SchedulersPercentage:SchedulersOnlinePercentage]]></c></tag>
@@ -929,8 +969,8 @@
         <p>Similar to <seealso marker="#+S"><c>+S</c></seealso> but uses
           percentages to set the number of scheduler threads to create, based
           on logical processors configured, and scheduler threads to set online,
-          based on logical processors available, when SMP support has been
-          enabled. Specified values must be &gt; 0. For example,
+          based on logical processors available.
+          Specified values must be &gt; 0. For example,
           <c>+SP 50:25</c> sets the number of scheduler threads to 50% of the
           logical processors configured, and the number of scheduler threads
           online to 25% of the logical processors available.
@@ -945,15 +985,13 @@
           and 8 logical cores available, the combination of the options
           <c>+S 4:4 +SP 50:25</c> (in either order) results in 2 scheduler
           threads (50% of 4) and 1 scheduler thread online (25% of 4).</p>
-        <p>This option is ignored if the emulator does not have SMP support
-          enabled (see flag <seealso marker="#smp"><c>-smp</c></seealso>).</p>
       </item>
       <tag><marker id="+SDcpu"/><c><![CDATA[+SDcpu
         DirtyCPUSchedulers:DirtyCPUSchedulersOnline]]></c></tag>
       <item>
         <p>Sets the number of dirty CPU scheduler threads to create and dirty
-          CPU scheduler threads to set online when threading support has been
-          enabled. The maximum for both values is 1024, and each value is
+          CPU scheduler threads to set online.
+          The maximum for both values is 1024, and each value is
           further limited by the settings for normal schedulers:</p>
         <list type="bulleted">
           <item>The number of dirty CPU scheduler threads created cannot exceed
@@ -977,16 +1015,14 @@
 	  executing on ordinary schedulers. If the amount of dirty CPU
 	  schedulers was allowed to be unlimited, dirty CPU bound jobs would
 	  potentially starve normal jobs.</p>
-        <p>This option is ignored if the emulator does not have threading
-          support enabled.</p>
       </item>
       <tag><marker id="+SDPcpu"/><c><![CDATA[+SDPcpu
         DirtyCPUSchedulersPercentage:DirtyCPUSchedulersOnlinePercentage]]></c></tag>
       <item>
         <p>Similar to <seealso marker="#+SDcpu"><c>+SDcpu</c></seealso> but
           uses percentages to set the number of dirty CPU scheduler threads to
-          create and the number of dirty CPU scheduler threads to set online
-          when threading support has been enabled. Specified values must be
+          create and the number of dirty CPU scheduler threads to set online.
+          Specified values must be
           &gt; 0. For example, <c>+SDPcpu 50:25</c> sets the number of dirty
           CPU scheduler threads to 50% of the logical processors configured
           and the number of dirty CPU scheduler threads online to 25% of the
@@ -1003,13 +1039,11 @@
           the combination of the options <c>+SDcpu 4:4 +SDPcpu 50:25</c> (in
           either order) results in 2 dirty CPU scheduler threads (50% of 4) and
           1 dirty CPU scheduler thread online (25% of 4).</p>
-        <p>This option is ignored if the emulator does not have threading
-          support enabled.</p>
       </item>
       <tag><marker id="+SDio"/><c><![CDATA[+SDio DirtyIOSchedulers]]></c></tag>
       <item>
-        <p>Sets the number of dirty I/O scheduler threads to create when
-          threading support has been enabled. Valid range is 0-1024. By
+        <p>Sets the number of dirty I/O scheduler threads to create.
+          Valid range is 0-1024. By
           default, the number of dirty I/O scheduler threads created is 10,
           same as the default number of threads in the <seealso
           marker="#async_thread_pool_size">async thread pool</seealso>.</p>
@@ -1019,8 +1053,6 @@
 	  expected to execute on dirty I/O schedulers. If the user should schedule CPU
 	  bound jobs on dirty I/O schedulers, these jobs might starve ordinary
 	  jobs executing on ordinary schedulers.</p>
-        <p>This option is ignored if the emulator does not have threading
-          support enabled.</p>
       </item>
       <tag><c><![CDATA[+sFlag Value]]></c></tag>
       <item>
@@ -1146,6 +1178,26 @@
             <p>Sets scheduler busy wait threshold. Defaults to <c>medium</c>.
               The threshold determines how long schedulers are to busy
               wait when running out of work before going to sleep.</p>
+            <note>
+              <p>This flag can be removed or changed at any time
+                without prior notice.</p>
+            </note>
+          </item>
+          <tag><marker id="+sbwtdcpu"/>
+            <c>+sbwtdcpu none|very_short|short|medium|long|very_long</c></tag>
+          <item>
+            <p>As <seealso marker="#+sbwt"><c>+sbwt</c></seealso> but affects
+              dirty CPU schedulers. Defaults to <c>short</c>.</p>
+            <note>
+              <p>This flag can be removed or changed at any time
+                without prior notice.</p>
+            </note>
+          </item>
+          <tag><marker id="+sbwtdio"/>
+            <c>+sbwtdio none|very_short|short|medium|long|very_long</c></tag>
+          <item>
+            <p>As <seealso marker="#+sbwt"><c>+sbwt</c></seealso> but affects
+              dirty IO schedulers. Defaults to <c>short</c>.</p>
             <note>
               <p>This flag can be removed or changed at any time
                 without prior notice.</p>
@@ -1297,25 +1349,6 @@
               <seealso marker="erlang#system_info_cpu_topology">
               <c>erlang:system_info(cpu_topology)</c></seealso>.</p>
           </item>
-          <tag><marker id="+secio"/><c>+secio true|false</c></tag>
-          <item>
-            <p>Enables or disables eager check I/O scheduling. Defaults
-              to <c>true</c>. The default was changed from <c>false</c>
-              as from ERTS 7.0. The behavior before this
-              flag was introduced corresponds to <c>+secio false</c>.</p>
-            <p>The flag effects when schedulers will check for I/O
-              operations possible to execute, and when such I/O operations
-              will execute. As the parameter name implies,
-              schedulers are more eager to check for I/O when
-              <c>true</c> is passed. This, however, also implies that
-              execution of outstanding I/O operation is not
-              prioritized to the same extent as when <c>false</c> is
-              passed.</p>
-            <p><seealso marker="erlang#system_info_eager_check_io">
-              <c>erlang:system_info(eager_check_io)</c></seealso>
-              returns the value of this parameter used when starting
-              the virtual machine.</p>
-          </item>
           <tag><marker id="+sfwi"/><c>+sfwi Interval</c></tag>
           <item>
             <p>Sets scheduler-forced wakeup interval. All run queues are
@@ -1433,6 +1466,26 @@
             <note>
               <p>This flag can be removed or changed at any time without prior
                 notice.</p>
+            </note>
+          </item>
+          <tag><marker id="+swtdcpu"/>
+            <c>+swtdcpu very_low|low|medium|high|very_high</c></tag>
+          <item>
+            <p>As <seealso marker="#+swt"><c>+swt</c></seealso> but
+              affects dirty CPU schedulers. Defaults to <c>medium</c>.</p>
+            <note>
+              <p>This flag can be removed or changed at any time
+                without prior notice.</p>
+            </note>
+          </item>
+          <tag><marker id="+swtdio"/>
+            <c>+swtdio very_low|low|medium|high|very_high</c></tag>
+          <item>
+            <p>As <seealso marker="#+swt"><c>+swt</c></seealso> but affects
+              dirty IO schedulers. Defaults to <c>medium</c>.</p>
+            <note>
+              <p>This flag can be removed or changed at any time
+                without prior notice.</p>
             </note>
           </item>
         </taglist>
@@ -1657,9 +1710,7 @@
       <tag>The <c>.erlang</c> startup file</tag>
       <item>
         <p>When Erlang/OTP is started, the system searches for a file named
-          <c>.erlang</c> in the directory where Erlang/OTP is started. If not
-          found, the user's home directory is searched for an <c>.erlang</c>
-          file.</p>
+        <c>.erlang</c> in the user's home directory.</p>
         <p>If an <c>.erlang</c> file is found, it is assumed to contain valid
           Erlang expressions. These expressions are evaluated as if they were
           input to the shell.</p>
@@ -1711,4 +1762,3 @@ code:load_abs("..../user_default").    ]]></code>
       <seealso marker="tools:make"><c>make(3)</c></seealso></p>
   </section>
 </comref>
-

@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2017. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -146,9 +146,7 @@ typedef union {
 
 /* A "magic" binary flag */
 #define BIN_FLAG_MAGIC      1
-#define BIN_FLAG_USR1       2 /* Reserved for use by different modules too mark */
-#define BIN_FLAG_USR2       4 /*  certain binaries as special (used by ets) */
-#define BIN_FLAG_DRV        8
+#define BIN_FLAG_DRV        2
 
 #endif /* ERL_BINARY_H__TYPES__ */
 
@@ -280,7 +278,6 @@ Eterm erts_bin_bytes_to_list(Eterm previous, Eterm* hp, byte* bytes, Uint size, 
  */
 
 BIF_RETTYPE erts_list_to_binary_bif(Process *p, Eterm arg, Export *bif);
-BIF_RETTYPE erts_gc_binary_part(Process *p, Eterm *reg, Eterm live, int range_is_tuple);
 BIF_RETTYPE erts_binary_part(Process *p, Eterm binary, Eterm epos, Eterm elen);
 
 
@@ -291,7 +288,7 @@ typedef union {
      * atomics are used they might
      * differ in size.
      */
-    erts_smp_atomic_t smp_atomic_word;
+    erts_atomic_t smp_atomic_word;
     erts_atomic_t atomic_word;
 } ErtsMagicIndirectionWord;
 
@@ -317,6 +314,7 @@ ERTS_GLB_INLINE Binary *erts_bin_drv_alloc(Uint size);
 ERTS_GLB_INLINE Binary *erts_bin_nrml_alloc(Uint size);
 ERTS_GLB_INLINE Binary *erts_bin_realloc_fnf(Binary *bp, Uint size);
 ERTS_GLB_INLINE Binary *erts_bin_realloc(Binary *bp, Uint size);
+ERTS_GLB_INLINE void erts_magic_binary_free(Binary *bp);
 ERTS_GLB_INLINE void erts_bin_free(Binary *bp);
 ERTS_GLB_INLINE void erts_bin_release(Binary *bp);
 ERTS_GLB_INLINE Binary *erts_create_magic_binary_x(Uint size,
@@ -326,7 +324,7 @@ ERTS_GLB_INLINE Binary *erts_create_magic_binary_x(Uint size,
 ERTS_GLB_INLINE Binary *erts_create_magic_binary(Uint size,
 						 int (*destructor)(Binary *));
 ERTS_GLB_INLINE Binary *erts_create_magic_indirection(int (*destructor)(Binary *));
-ERTS_GLB_INLINE erts_smp_atomic_t *erts_smp_binary_to_magic_indirection(Binary *bp);
+ERTS_GLB_INLINE erts_atomic_t *erts_binary_to_magic_indirection(Binary *bp);
 ERTS_GLB_INLINE erts_atomic_t *erts_binary_to_magic_indirection(Binary *bp);
 
 #if ERTS_GLB_INLINE_INCL_FUNC_DEF
@@ -363,8 +361,6 @@ erts_free_aligned_binary_bytes(byte* buf)
 #  define CHICKEN_PAD (sizeof(void*) - 1)
 #endif
 
-/* Caller must initialize 'refc'
-*/
 ERTS_GLB_INLINE Binary *
 erts_bin_drv_alloc_fnf(Uint size)
 {
@@ -383,8 +379,6 @@ erts_bin_drv_alloc_fnf(Uint size)
     return res;
 }
 
-/* Caller must initialize 'refc'
-*/
 ERTS_GLB_INLINE Binary *
 erts_bin_drv_alloc(Uint size)
 {
@@ -401,9 +395,6 @@ erts_bin_drv_alloc(Uint size)
     return res;
 }
 
-
-/* Caller must initialize 'refc'
-*/
 ERTS_GLB_INLINE Binary *
 erts_bin_nrml_alloc(Uint size)
 {
@@ -456,6 +447,13 @@ erts_bin_realloc(Binary *bp, Uint size)
 }
 
 ERTS_GLB_INLINE void
+erts_magic_binary_free(Binary *bp)
+{
+    erts_magic_ref_remove_bin(ERTS_MAGIC_BIN_REFN(bp));
+    erts_free(ERTS_MAGIC_BIN_ATYPE(bp), (void *) bp);
+}
+
+ERTS_GLB_INLINE void
 erts_bin_free(Binary *bp)
 {
     if (bp->intern.flags & BIN_FLAG_MAGIC) {
@@ -463,8 +461,7 @@ erts_bin_free(Binary *bp)
             /* Destructor took control of the deallocation */
             return;
         }
-	erts_magic_ref_remove_bin(ERTS_MAGIC_BIN_REFN(bp));
-        erts_free(ERTS_MAGIC_BIN_ATYPE(bp), (void *) bp);
+        erts_magic_binary_free(bp);
     }
     else if (bp->intern.flags & BIN_FLAG_DRV)
 	erts_free(ERTS_ALC_T_DRV_BINARY, (void *) bp);
@@ -519,16 +516,6 @@ erts_create_magic_indirection(int (*destructor)(Binary *))
                                              but word aligned */
 }
 
-ERTS_GLB_INLINE erts_smp_atomic_t *
-erts_smp_binary_to_magic_indirection(Binary *bp)
-{
-    ErtsMagicIndirectionWord *mip;
-    ASSERT(bp->intern.flags & BIN_FLAG_MAGIC);
-    ASSERT(ERTS_MAGIC_BIN_ATYPE(bp) == ERTS_ALC_T_MINDIRECTION);
-    mip = ERTS_MAGIC_BIN_UNALIGNED_DATA(bp);
-    return &mip->smp_atomic_word;
-}
-
 ERTS_GLB_INLINE erts_atomic_t *
 erts_binary_to_magic_indirection(Binary *bp)
 {
@@ -536,7 +523,7 @@ erts_binary_to_magic_indirection(Binary *bp)
     ASSERT(bp->intern.flags & BIN_FLAG_MAGIC);
     ASSERT(ERTS_MAGIC_BIN_ATYPE(bp) == ERTS_ALC_T_MINDIRECTION);
     mip = ERTS_MAGIC_BIN_UNALIGNED_DATA(bp);
-    return &mip->atomic_word;
+    return &mip->smp_atomic_word;
 }
 
 #endif /* #if ERTS_GLB_INLINE_INCL_FUNC_DEF */

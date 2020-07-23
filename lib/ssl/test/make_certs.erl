@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 2007-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2007-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 %%
 
 -module(make_certs).
--compile([export_all]).
+-compile([export_all, nowarn_export_all]).
 
 %-export([all/1, all/2, rootCA/2, intermediateCA/3, endusers/3, enduser/3, revoke/3, gencrl/2, verify/3]).
 
@@ -34,14 +34,15 @@
 	     ecc_certs = false,
 	     issuing_distribution_point = false,
 	     crl_port = 8000,
-	     openssl_cmd = "openssl"}).
+             openssl_cmd = "openssl",
+             hostname = "host.example.com"}).
 
 
 default_config() ->
-    #config{}.
+    #config{hostname = net_adm:localhost()}.
 
 make_config(Args) ->
-    make_config(Args, #config{}).
+    make_config(Args, default_config()).
 
 make_config([], C) ->
     C;
@@ -66,7 +67,9 @@ make_config([{ecc_certs, Bool}|T], C) when is_boolean(Bool) ->
 make_config([{issuing_distribution_point, Bool}|T], C) when is_boolean(Bool) ->
     make_config(T, C#config{issuing_distribution_point = Bool});
 make_config([{openssl_cmd, Cmd}|T], C) when is_list(Cmd) ->
-    make_config(T, C#config{openssl_cmd = Cmd}).
+    make_config(T, C#config{openssl_cmd = Cmd});
+make_config([{hostname, Hostname}|T], C) when is_list(Hostname) ->
+    make_config(T, C#config{hostname = Hostname}).
 
 
 all([DataDir, PrivDir]) ->
@@ -184,6 +187,18 @@ gencrl(Root, CA, C, CrlHours) ->
 	   " -out ", CACRLFile,
 	   " -config ", CACnfFile],
     Env = [{"ROOTDIR", filename:absname(Root)}], 
+    cmd(Cmd, Env).
+
+%% This function sets the number of seconds until the next CRL is due.
+gencrl_sec(Root, CA, C, CrlSecs) ->
+    CACnfFile = filename:join([Root, CA, "ca.cnf"]),
+    CACRLFile = filename:join([Root, CA, "crl.pem"]),
+    Cmd = [C#config.openssl_cmd, " ca"
+	   " -gencrl ",
+	   " -crlsec ", integer_to_list(CrlSecs),
+	   " -out ", CACRLFile,
+	   " -config ", CACnfFile],
+    Env = [{"ROOTDIR", filename:absname(Root)}],
     cmd(Cmd, Env).
 
 can_generate_expired_crls(C) ->
@@ -362,7 +377,7 @@ req_cnf(Root, C) ->
      "default_bits	= ", integer_to_list(C#config.default_bits), "\n"
      "RANDFILE		= $ROOTDIR/RAND\n"
      "encrypt_key	= no\n"
-     "default_md	= md5\n"
+     "default_md	= sha1\n"
      "#string_mask	= pkix\n"
      "x509_extensions	= ca_ext\n"
      "prompt		= no\n"
@@ -384,8 +399,11 @@ req_cnf(Root, C) ->
      "subjectKeyIdentifier = hash\n"
      "subjectAltName	= email:copy\n"].
 
-ca_cnf(Root, C = #config{issuing_distribution_point = true}) ->
-    Hostname = net_adm:localhost(),		    
+ca_cnf(
+  Root,
+  #config{
+     issuing_distribution_point = true,
+     hostname = Hostname} = C) ->
     ["# Purpose: Configuration for CAs.\n"
      "\n"
      "ROOTDIR	       = " ++ Root ++ "\n"
@@ -409,7 +427,7 @@ ca_cnf(Root, C = #config{issuing_distribution_point = true}) ->
      ["crl_extensions = crl_ext\n" || C#config.v2_crls],
      "unique_subject  = no\n"
      "default_days	= 3600\n"
-     "default_md	= md5\n"
+     "default_md	= sha1\n"
      "preserve	        = no\n"
      "policy		= policy_match\n"
      "\n"
@@ -464,8 +482,12 @@ ca_cnf(Root, C = #config{issuing_distribution_point = true}) ->
      "crlDistributionPoints=@crl_section\n"
     ];
 
-ca_cnf(Root, C = #config{issuing_distribution_point = false}) ->
-  Hostname = net_adm:localhost(),	     
+ca_cnf(
+  Root,
+  #config{
+     issuing_distribution_point = false,
+     hostname = Hostname
+    } = C) ->
     ["# Purpose: Configuration for CAs.\n"
      "\n"
      "ROOTDIR	          = " ++ Root ++ "\n"
@@ -489,7 +511,7 @@ ca_cnf(Root, C = #config{issuing_distribution_point = false}) ->
      ["crl_extensions = crl_ext\n" || C#config.v2_crls],
      "unique_subject  = no\n"
      "default_days	= 3600\n"
-     "default_md	= md5\n"
+     "default_md	= sha1\n"
      "preserve	        = no\n"
      "policy		= policy_match\n"
      "\n"

@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2003</year><year>2017</year>
+      <year>2003</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -32,7 +32,7 @@
     <rev>A</rev>
     <file>filelib.xml</file>
   </header>
-  <module>filelib</module>
+  <module since="">filelib</module>
   <modulesummary>File utilities, such as wildcard matching of filenames.
   </modulesummary>
   <description>
@@ -45,6 +45,30 @@
 
     <p>For more information about raw filenames, see the
       <seealso marker="kernel:file"><c>file</c></seealso> module.</p>
+
+    <note>
+      <p>
+	Functionality in this module generally assumes valid input and
+	does not necessarily fail on input that does not use a valid
+	encoding, but may instead very likely produce invalid output.
+      </p>
+      <p>
+	File operations used to accept filenames containing
+	null characters (integer value zero). This caused
+	the name to be truncated and in some cases arguments
+	to primitive operations to be mixed up. Filenames
+	containing null characters inside the filename
+	are now <em>rejected</em> and will cause primitive
+	file operations to fail.
+      </p>
+    </note>
+    <warning><p>
+      Currently null characters at the end of the filename
+      will be accepted by primitive file operations. Such
+      filenames are however still documented as invalid. The
+      implementation will also change in the future and
+      reject such filenames.
+    </p></warning>
   </description>
 
   <datatypes>
@@ -70,7 +94,7 @@
 
   <funcs>
     <func>
-      <name name="ensure_dir" arity="1"/>
+      <name name="ensure_dir" arity="1" since=""/>
       <fsummary>Ensure that all parent directories for a file or directory
         exist.</fsummary>
       <desc>
@@ -84,7 +108,7 @@
     </func>
 
     <func>
-      <name name="file_size" arity="1"/>
+      <name name="file_size" arity="1" since=""/>
       <fsummary>Return the size in bytes of a file.</fsummary>
       <desc>
         <p>Returns the size of the specified file.</p>
@@ -92,7 +116,7 @@
     </func>
 
     <func>
-      <name name="fold_files" arity="5"/>
+      <name name="fold_files" arity="5" since=""/>
       <fsummary>Fold over all files matching a regular expression.</fsummary>
       <desc>
         <p>Folds function <c><anno>Fun</anno></c> over all (regular) files
@@ -118,7 +142,7 @@
     </func>
 
     <func>
-      <name name="is_dir" arity="1"/>
+      <name name="is_dir" arity="1" since=""/>
       <fsummary>Test whether <c>Name</c> refers to a directory.</fsummary>
       <desc>
         <p>Returns <c>true</c> if <c><anno>Name</anno></c>
@@ -127,7 +151,7 @@
     </func>
 
     <func>
-      <name name="is_file" arity="1"/>
+      <name name="is_file" arity="1" since=""/>
       <fsummary>Test whether <c>Name</c> refers to a file or directory.
       </fsummary>
       <desc>
@@ -137,7 +161,7 @@
     </func>
 
     <func>
-      <name name="is_regular" arity="1"/>
+      <name name="is_regular" arity="1" since=""/>
       <fsummary>Test whether <c>Name</c> refers to a (regular) file.</fsummary>
       <desc>
         <p>Returns <c>true</c> if <c><anno>Name</anno></c>
@@ -146,7 +170,7 @@
     </func>
 
     <func>
-      <name name="last_modified" arity="1"/>
+      <name name="last_modified" arity="1" since=""/>
       <fsummary>Return the local date and time when a file was last modified.
       </fsummary>
       <desc>
@@ -156,7 +180,7 @@
     </func>
 
     <func>
-      <name name="wildcard" arity="1"/>
+      <name name="wildcard" arity="1" since=""/>
       <fsummary>Match filenames using Unix-style wildcards.</fsummary>
       <desc>
         <p>Returns a list of all files that match Unix-style wildcard string
@@ -193,6 +217,11 @@
         <p>Other characters represent themselves. Only filenames that
           have exactly the same character in the same position match.
           Matching is case-sensitive, for example, "a" does not match "A".</p>
+	<p>Directory separators must always be written as <c>/</c>, even on
+	Windows.</p>
+	<p>A character preceded by <c>\</c> loses its special meaning. Note
+	that <c>\</c> must be written as <c>\\</c> in a string literal.
+	For example, "\\?*" will match any filename starting with <c>?</c>.</p>
         <p>Notice that multiple "*" characters are allowed
           (as in Unix wildcards, but opposed to Windows/DOS wildcards).</p>
         <p><em>Examples:</em></p>
@@ -223,7 +252,7 @@ filelib:wildcard("lib/**/*.{erl,hrl}")</code>
     </func>
 
     <func>
-      <name name="wildcard" arity="2"/>
+      <name name="wildcard" arity="2" since=""/>
       <fsummary>Match filenames using Unix-style wildcards starting at a
         specified directory.</fsummary>
       <desc>
@@ -234,8 +263,8 @@ filelib:wildcard("lib/**/*.{erl,hrl}")</code>
     </func>
 
     <func>
-      <name name="find_file" arity="2"/>
-      <name name="find_file" arity="3"/>
+      <name name="find_file" arity="2" since="OTP 20.0"/>
+      <name name="find_file" arity="3" since="OTP 20.0"/>
       <fsummary>Find a file relative to a given directory.</fsummary>
       <desc>
         <p>Looks for a file of the given name by applying suffix rules to
@@ -249,7 +278,7 @@ filelib:wildcard("lib/**/*.{erl,hrl}")</code>
       </desc>
     </func>
     <func>
-      <name name="find_source" arity="1"/>
+      <name name="find_source" arity="1" since="OTP 20.0"/>
       <fsummary>Find the source file for a given object file.</fsummary>
       <desc>
         <p>Equivalent to <c>find_source(Base, Dir)</c>, where <c>Dir</c> is
@@ -258,8 +287,8 @@ filelib:wildcard("lib/**/*.{erl,hrl}")</code>
       </desc>
     </func>
     <func>
-      <name name="find_source" arity="2"/>
-      <name name="find_source" arity="3"/>
+      <name name="find_source" arity="2" since="OTP 20.0"/>
+      <name name="find_source" arity="3" since="OTP 20.0"/>
       <fsummary>Find a source file relative to a given directory.</fsummary>
       <desc>
         <p>Applies file extension specific rules to find the source file for
@@ -267,7 +296,7 @@ filelib:wildcard("lib/**/*.{erl,hrl}")</code>
         for a file with the extension <c>.beam</c>, the default rule is to
         look for a file with a corresponding extension <c>.erl</c> by
         replacing the suffix <c>"ebin"</c> of the object directory path with
-        <c>"src"</c>.
+        <c>"src"</c> or <c>"src/*"</c>.
         The file search is done through <seealso
         marker="#find_file/3"><c>find_file/3</c></seealso>. The directory of
         the object file is always tried before any other directory specified

@@ -675,7 +675,12 @@ lay_2(Node, Ctxt) ->
 	    %% attribute name, without following parentheses.
 	    Ctxt1 = reset_prec(Ctxt),
             Args = erl_syntax:attribute_arguments(Node),
-            N = erl_syntax:attribute_name(Node),
+            N = case erl_syntax:attribute_name(Node) of
+                    {atom, _, 'if'} ->
+                        erl_syntax:variable('if');
+                    N0 ->
+                        N0
+                end,
             D = case attribute_type(Node) of
                     spec ->
                         [SpecTuple] = Args,
@@ -774,9 +779,16 @@ lay_2(Node, Ctxt) ->
 	class_qualifier ->
 	    Ctxt1 = set_prec(Ctxt, max_prec()),
 	    D1 = lay(erl_syntax:class_qualifier_argument(Node), Ctxt1),
-	    D2 = lay(erl_syntax:class_qualifier_body(Node), Ctxt1),
-	    beside(D1, beside(text(":"), D2));
-
+            D2 = lay(erl_syntax:class_qualifier_body(Node), Ctxt1),
+            Stacktrace = erl_syntax:class_qualifier_stacktrace(Node),
+            case erl_syntax:variable_name(Stacktrace) of
+                '_' ->
+                    beside(D1, beside(text(":"), D2));
+                _ ->
+                    D3 = lay(Stacktrace, Ctxt1),
+                    beside(D1, beside(beside(text(":"), D2),
+                                      beside(text(":"), D3)))
+            end;
 	comment ->
 	    D = stack_comment_lines(
 		  erl_syntax:comment_text(Node)),
@@ -1089,8 +1101,9 @@ lay_2(Node, Ctxt) ->
             Ctxt1 = reset_prec(Ctxt),
             D1 = lay(erl_syntax:constrained_function_type_body(Node),
                      Ctxt1),
+            Ctxt2 = Ctxt1#ctxt{clause = undefined},
             D2 = lay(erl_syntax:constrained_function_type_argument(Node),
-                     Ctxt1),
+                     Ctxt2),
             beside(D1,
                    beside(floating(text(" when ")), D2));
 
@@ -1101,7 +1114,7 @@ lay_2(Node, Ctxt) ->
                                   _ ->
                                       {"fun(", ")"}
                               end,
-            Ctxt1 = reset_prec(Ctxt),
+            Ctxt1 = (reset_prec(Ctxt))#ctxt{clause = undefined},
             D1 = case erl_syntax:function_type_arguments(Node) of
                      any_arity ->
                          text("(...)");

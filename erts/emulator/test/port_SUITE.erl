@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -109,7 +109,6 @@
     mon_port_pid_demonitor/1,
     mon_port_remote_on_remote/1,
     mon_port_driver_die/1,
-    mon_port_driver_die_demonitor/1,
     mul_basic/1,
     mul_slow_writes/1,
     name1/1,
@@ -180,8 +179,7 @@ all() ->
      mon_port_bad_named,
      mon_port_pid_demonitor,
      mon_port_name_demonitor,
-     mon_port_driver_die,
-     mon_port_driver_die_demonitor
+     mon_port_driver_die
     ].
 
 groups() ->
@@ -967,7 +965,7 @@ env_slave(File, Env) ->
 
 env_slave(File, Env, Body) ->
     file:write_file(File, term_to_binary(Body)),
-    Program = atom_to_list(lib:progname()),
+    Program = ct:get_progname(),
     Dir = filename:dirname(code:which(?MODULE)),
     Cmd = Program ++ " -pz " ++ Dir ++
     " -noinput -run " ++ ?MODULE_STRING ++ " env_slave_main " ++
@@ -1035,6 +1033,9 @@ huge_env(Config) when is_list(Config) ->
     try erlang:open_port({spawn,Cmd},[exit_status, {env, Env}]) of
         P ->
             receive
+                {P, {exit_status,N}} = M when N > 127->
+                    %% If exit status is > 127 something went very wrong
+                    ct:fail("Open port failed got ~p",[M]);
                 {P, {exit_status,N}} = M ->
                     %% We test that the exit status is an integer, this means
                     %% that the child program has started. If we get an atom
@@ -1128,7 +1129,7 @@ try_bad_args(Args) ->
 cd(Config)  when is_list(Config) ->
     ct:timetrap({minutes, 1}),
 
-    Program = atom_to_list(lib:progname()),
+    Program = ct:get_progname(),
     DataDir = proplists:get_value(data_dir, Config),
     TestDir = filename:join(DataDir, "dir"),
     Cmd = Program ++ " -pz " ++ DataDir ++
@@ -1190,7 +1191,7 @@ cd(Config)  when is_list(Config) ->
 %% be relative the new cwd and not the original
 cd_relative(Config) ->
 
-    Program = atom_to_list(lib:progname()),
+    Program = ct:get_progname(),
     DataDir = proplists:get_value(data_dir, Config),
     TestDir = filename:join(DataDir, "dir"),
 
@@ -1213,7 +1214,7 @@ cd_relative(Config) ->
 
 relative_cd() ->
 
-    Program = atom_to_list(lib:progname()),
+    Program = ct:get_progname(),
     ok = file:set_cwd(".."),
     {ok, Cwd} = file:get_cwd(),
 
@@ -1662,13 +1663,7 @@ spawn_executable(Config) when is_list(Config) ->
     [ExactFile2,"hello world","dlrow olleh"] =
     run_echo_args_2(unicode:characters_to_binary("\""++ExactFile2++"\" "++"\"hello world\" \"dlrow olleh\"")),
 
-    ExeExt =
-    case string:to_lower(lists:last(string:tokens(ExactFile2,"."))) of
-        "exe" ->
-            ".exe";
-        _ ->
-            ""
-    end,
+    ExeExt = filename:extension(ExactFile2),
     Executable2 = "spoky name"++ExeExt,
     file:copy(ExactFile1,filename:join([SpaceDir,Executable2])),
     ExactFile3 = filename:nativename(filename:join([SpaceDir,Executable2])),
@@ -1836,7 +1831,7 @@ collect_data(Port) ->
     end.
 
 parse_echo_args_output(Data) ->
-    [lists:last(string:tokens(S,"|")) || S <- string:tokens(Data,"\r\n")].
+    [lists:last(string:lexemes(S,"|")) || S <- string:lexemes(Data,["\r\n",$\n])].
 
 %% Test that the emulator does not mix up ports when the port table wraps
 mix_up_ports(Config) when is_list(Config) ->
@@ -1962,7 +1957,7 @@ max_ports() ->
     erlang:system_info(port_limit).
 
 port_ix(Port) when is_port(Port) ->
-    ["#Port",_,PortIxStr] = string:tokens(erlang:port_to_list(Port),
+    ["#Port",_,PortIxStr] = string:lexemes(erlang:port_to_list(Port),
                                           "<.>"),
     list_to_integer(PortIxStr).
 
@@ -2786,7 +2781,7 @@ mon_port_driver_die(Config) ->
     end,
     ok.
 
-
+-ifdef(DISABLED_TESTCASE).
 %% 1. Spawn a port which will sleep 3 seconds
 %% 2. Monitor port
 %% 3. Port driver and dies horribly (via C driver_failure call). This should
@@ -2822,6 +2817,7 @@ mon_port_driver_die_demonitor(Config) ->
     after 5000 -> ?assert(false)
     end,
     ok.
+-endif.
 
 %% @doc Makes a controllable port for testing. Underlying mechanism of this
 %% port is not important, only important is our ability to close/kill it or

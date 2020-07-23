@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1998-2017. All Rights Reserved.
+ * Copyright Ericsson AB 1998-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 #ifndef _DB_UTIL_H
 #define _DB_UTIL_H
 
+#include "erl_flxctr.h"
 #include "global.h"
 #include "erl_message.h"
 #include "erl_bif_unique.h"
@@ -32,6 +33,7 @@
 ** DMC_DEBUG does NOT need DEBUG, but DEBUG needs DMC_DEBUG
 */
 #define DMC_DEBUG 1
+#define ETS_DBG_FORCE_TRAP 1
 #endif
 
 /*
@@ -88,9 +90,26 @@ typedef struct {
     void** bp;         /* {Hash|Tree}DbTerm** */
     Uint new_size;
     int flags;
-    void* lck;
+    union {
+        struct {
+            erts_rwmtx_t* lck;
+        } hash;
+        struct {
+            struct DbTableCATreeNode* base_node;
+            struct DbTableCATreeNode* parent;
+            int current_level;
+        } catree;
+    } u;
 } DbUpdateHandle;
 
+/* How safe are we from double-hits or missed objects
+ * when iterating without fixation?
+ */
+enum DbIterSafety {
+    ITER_UNSAFE,      /* Must fixate to be safe */
+    ITER_SAFE_LOCKED, /* Safe while table is locked, not between trap calls */
+    ITER_SAFE         /* No need to fixate at all */
+};
 
 typedef struct db_table_method
 {
@@ -140,50 +159,62 @@ typedef struct db_table_method
 			   Eterm pattern,
 			   Sint chunk_size,
 			   int reverse,
-			   Eterm* ret);
+			   Eterm* ret,
+                           enum DbIterSafety);
     int (*db_select)(Process* p, 
 		     DbTable* tb, /* [in out] */
                      Eterm tid,
 		     Eterm pattern,
 		     int reverse,
-		     Eterm* ret);
+		     Eterm* ret,
+                     enum DbIterSafety);
     int (*db_select_delete)(Process* p, 
 			    DbTable* tb, /* [in out] */
                             Eterm tid,
 			    Eterm pattern,
-			    Eterm* ret);
+			    Eterm* ret,
+                            enum DbIterSafety);
     int (*db_select_continue)(Process* p, 
 			      DbTable* tb, /* [in out] */
 			      Eterm continuation,
-			      Eterm* ret);
+			      Eterm* ret,
+                              enum DbIterSafety*);
     int (*db_select_delete_continue)(Process* p, 
 				     DbTable* tb, /* [in out] */
 				     Eterm continuation,
-				     Eterm* ret);
+				     Eterm* ret,
+                                     enum DbIterSafety*);
     int (*db_select_count)(Process* p, 
 			   DbTable* tb, /* [in out] */
                            Eterm tid,
 			   Eterm pattern, 
-			   Eterm* ret);
+			   Eterm* ret,
+                           enum DbIterSafety);
     int (*db_select_count_continue)(Process* p, 
 				    DbTable* tb, /* [in out] */ 
 				    Eterm continuation, 
-				    Eterm* ret);
+				    Eterm* ret,
+                                    enum DbIterSafety*);
     int (*db_select_replace)(Process* p,
             DbTable* tb, /* [in out] */
             Eterm tid,
             Eterm pattern,
-            Eterm* ret);
+            Eterm* ret,
+            enum DbIterSafety);
     int (*db_select_replace_continue)(Process* p,
             DbTable* tb, /* [in out] */
             Eterm continuation,
-            Eterm* ret);
+            Eterm* ret,
+            enum DbIterSafety*);
     int (*db_take)(Process *, DbTable *, Eterm, Eterm *);
 
-    int (*db_delete_all_objects)(Process* p,
-				 DbTable* db /* [in out] */ );
-
-    int (*db_free_table)(DbTable* db /* [in out] */ );
+    SWord (*db_delete_all_objects)(Process* p,
+                                   DbTable* db,
+                                   SWord reds,
+                                   Eterm* nitems_holder_wb);
+    Eterm (*db_delete_all_objects_get_nitems_from_holder)(Process* p,
+                                                          Eterm nitems_holder);
+    int (*db_free_empty_table)(DbTable* db);
     SWord (*db_free_table_continue)(DbTable* db, SWord reds);
     
     void (*db_print)(fmtfn_t to,
@@ -231,6 +262,9 @@ typedef struct {
     DbTable *prev;
 } DbTableList;
 
+#define ERTS_DB_TABLE_NITEMS_COUNTER_ID 0
+#define ERTS_DB_TABLE_MEM_COUNTER_ID 1
+
 /*
  * This structure contains data for all different types of database
  * tables. Note that these fields must match the same fields
@@ -240,16 +274,14 @@ typedef struct {
  */
 
 typedef struct db_table_common {
-    erts_smp_refc_t refc;     /* reference count of table struct */
-    erts_smp_refc_t fix_count;/* fixation counter */
+    erts_refc_t refc;     /* reference count of table struct */
+    erts_refc_t fix_count;/* fixation counter */
     DbTableList all;
     DbTableList owned;
-#ifdef ERTS_SMP
-    erts_smp_rwmtx_t rwlock;  /* rw lock on table */
-    erts_smp_mtx_t fixlock;   /* Protects fixing_procs and time */
+    erts_rwmtx_t rwlock;  /* rw lock on table */
+    erts_mtx_t fixlock;   /* Protects fixing_procs and time */
     int is_thread_safe;       /* No fine locking inside table needed */
     Uint32 type;              /* table type, *read only* after creation */
-#endif
     Eterm owner;              /* Pid of the creator */
     Eterm heir;               /* Pid of the heir */
     UWord heir_data;          /* To send in ETS-TRANSFER (is_immed or (DbTerm*) */
@@ -257,8 +289,11 @@ typedef struct db_table_common {
     Eterm the_name;           /* an atom */
     Binary *btid;
     DbTableMethod* meth;      /* table methods */
-    erts_smp_atomic_t nitems; /* Total number of items in table */
-    erts_smp_atomic_t memory_size;/* Total memory size. NOTE: in bytes! */
+    /* The ErtsFlxCtr below contains:
+     * - Total number of items in table
+     * - Total memory size (NOTE: in bytes!) */
+    ErtsFlxCtr counters;
+    char extra_for_flxctr[ERTS_FLXCTR_NR_OF_EXTRA_BYTES(2)];
     struct {                  /* Last fixation time */
 	ErtsMonotonicTime monotonic;
 	ErtsMonotonicTime offset;
@@ -269,29 +304,37 @@ typedef struct db_table_common {
     Uint32 status;            /* bit masks defined  below */
     int keypos;               /* defaults to 1 */
     int compress;
+
+#ifdef ETS_DBG_FORCE_TRAP
+    erts_atomic_t dbg_force_trap;  /* &1 force enabled, &2 trap this call */
+#endif
 } DbTableCommon;
 
 /* These are status bit patterns */
-#define DB_PRIVATE       (1 << 0)
-#define DB_PROTECTED     (1 << 1)
-#define DB_PUBLIC        (1 << 2)
-#define DB_DELETE        (1 << 3) /* table is being deleted */
-#define DB_SET           (1 << 4)
-#define DB_BAG           (1 << 5)
-#define DB_DUPLICATE_BAG (1 << 6)
-#define DB_ORDERED_SET   (1 << 7)
-#define DB_FINE_LOCKED   (1 << 8) /* write_concurrency */
-#define DB_FREQ_READ     (1 << 9) /* read_concurrency */
-#define DB_NAMED_TABLE   (1 << 10)
+#define DB_PRIVATE        (1 << 0)
+#define DB_PROTECTED      (1 << 1)
+#define DB_PUBLIC         (1 << 2)
+#define DB_DELETE         (1 << 3) /* table is being deleted */
+#define DB_SET            (1 << 4)
+#define DB_BAG            (1 << 5)
+#define DB_DUPLICATE_BAG  (1 << 6)
+#define DB_ORDERED_SET    (1 << 7)
+#define DB_CA_ORDERED_SET (1 << 8)
+#define DB_FINE_LOCKED    (1 << 9)  /* write_concurrency */
+#define DB_FREQ_READ      (1 << 10) /* read_concurrency */
+#define DB_NAMED_TABLE    (1 << 11)
+#define DB_BUSY           (1 << 12)
 
-#define ERTS_ETS_TABLE_TYPES (DB_BAG|DB_SET|DB_DUPLICATE_BAG|DB_ORDERED_SET\
-                              |DB_FINE_LOCKED|DB_FREQ_READ|DB_NAMED_TABLE)
+#define DB_CATREE_FORCE_SPLIT (1 << 31)  /* erts_debug */
+#define DB_CATREE_DEBUG_RANDOM_SPLIT_JOIN (1 << 30)  /* erts_debug */
 
 #define IS_HASH_TABLE(Status) (!!((Status) & \
 				  (DB_BAG | DB_SET | DB_DUPLICATE_BAG)))
 #define IS_TREE_TABLE(Status) (!!((Status) & \
 				  DB_ORDERED_SET))
-#define NFIXED(T) (erts_smp_refc_read(&(T)->common.fix_count,0))
+#define IS_CATREE_TABLE(Status) (!!((Status) & \
+                                    DB_CA_ORDERED_SET))
+#define NFIXED(T) (erts_refc_read(&(T)->common.fix_count,0))
 #define IS_FIXED(T) (NFIXED(T) != 0) 
 
 /*
@@ -471,7 +514,7 @@ Binary *db_match_compile(Eterm *matchexpr, Eterm *guards,
 /* Returns newly allocated MatchProg binary with refc == 0*/
 
 Eterm db_match_dbterm(DbTableCommon* tb, Process* c_p, Binary* bprog,
-		      int all, DbTerm* obj, Eterm** hpp, Uint extra);
+		      DbTerm* obj, Eterm** hpp, Uint extra);
 
 Eterm db_prog_match(Process *p, Process *self,
                     Binary *prog, Eterm term,

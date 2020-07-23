@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -59,8 +59,9 @@ init([Pid, ParentFrame, Parent]) ->
 		  {registered_name, Registered} -> io_lib:format("~tp (~p)",[Registered, Pid]);
 		  undefined -> throw(process_undefined)
 	      end,
+    Scale = observer_wx:get_scale(),
 	Frame=wxFrame:new(ParentFrame, ?wxID_ANY, [atom_to_list(node(Pid)), $:, Title],
-			  [{style, ?wxDEFAULT_FRAME_STYLE}, {size, {850,600}}]),
+			  [{style, ?wxDEFAULT_FRAME_STYLE}, {size, {Scale * 850, Scale * 600}}]),
 	MenuBar = wxMenuBar:new(),
 	create_menus(MenuBar),
 	wxFrame:setMenuBar(Frame, MenuBar),
@@ -120,6 +121,10 @@ handle_event(#wx{id=?REFRESH}, #state{frame=Frame, pid=Pid, pages=Pages, expand_
     end,
     {noreply, State};
 
+handle_event(#wx{obj=MoreEntry,event=#wxMouse{type=left_down},userData={more,More}}, State) ->
+    observer_lib:add_scroll_entries(MoreEntry,More),
+    {noreply, State};
+
 handle_event(#wx{event=#wxMouse{type=left_down}, userData=TargetPid}, State) ->
     observer ! {open_link, TargetPid},
     {noreply, State};
@@ -144,7 +149,7 @@ handle_event(#wx{event=#wxHtmlLink{linkInfo=#wxHtmlLinkInfo{href=Href}}},
 	    observer ! {open_link, Href},
 	    {noreply, State};
 	Callback ->
-	    [{"key1",Key1},{"key2",Key2},{"key3",Key3}] = httpd:parse_query(Rest),
+	    [{"key1",Key1},{"key2",Key2},{"key3",Key3}] = uri_string:dissect_query(Rest),
 	    Id = {obs, {T,{list_to_integer(Key1),
 			   list_to_integer(Key2),
 			   list_to_integer(Key3)}}},
@@ -241,20 +246,19 @@ init_dict_page(Parent, Pid, Table) ->
 init_stack_page(Parent, Pid) ->
     LCtrl = wxListCtrl:new(Parent, [{style, ?wxLC_REPORT bor ?wxLC_HRULES}]),
     Li = wxListItem:new(),
+    Scale = observer_wx:get_scale(),
     wxListItem:setText(Li, "Module:Function/Arg"),
     wxListCtrl:insertColumn(LCtrl, 0, Li),
-    wxListCtrl:setColumnWidth(LCtrl, 0, 300),
+    wxListCtrl:setColumnWidth(LCtrl, 0, Scale * 300),
     wxListItem:setText(Li, "File:LineNumber"),
     wxListCtrl:insertColumn(LCtrl, 1, Li),
-    wxListCtrl:setColumnWidth(LCtrl, 1, 300),
+    wxListCtrl:setColumnWidth(LCtrl, 1, Scale * 300),
     wxListItem:destroy(Li),
     Update = fun() ->
 		     case observer_wx:try_rpc(node(Pid), erlang, process_info,
 					      [Pid, current_stacktrace])
 		     of
 			 {current_stacktrace,RawBt} ->
-			     observer_wx:try_rpc(node(Pid), erlang, process_info,
-						 [Pid, current_stacktrace]),
 			     wxListCtrl:deleteAllItems(LCtrl),
 			     wx:foldl(fun({M, F, A, Info}, Row) ->
 					      _Item = wxListCtrl:insertItem(LCtrl, Row, ""),
@@ -454,7 +458,8 @@ local_pid_str(Pid) ->
 
 global_pid_node_pref(Pid) ->
     %% Global PID node prefix : X of <X.Y.Z>
-    string:strip(string:sub_word(pid_to_list(Pid),1,$.),left,$<).
+    [NodePrefix|_] = string:lexemes(pid_to_list(Pid),"<."),
+    NodePrefix.
 
 io_get_data(Pid) ->
     Pid ! {self(), get_data_and_close},

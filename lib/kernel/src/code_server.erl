@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -340,8 +340,7 @@ handle_call(all_loaded, _From, S) ->
     {reply,all_loaded(Db),S};
 
 handle_call({get_object_code,Mod}, _From, St) when is_atom(Mod) ->
-    Path = St#state.path,
-    case mod_to_bin(Path, Mod) of
+    case get_object_code(St, Mod) of
 	{_,Bin,FName} -> {reply,{Mod,Bin,FName},St};
 	Error -> {reply,Error,St}
     end;
@@ -1182,19 +1181,28 @@ load_file(Mod, From, St0) ->
 	     end,
     handle_pending_on_load(Action, Mod, From, St0).
 
-load_file_1(Mod, From, #state{path=Path}=St) ->
-    case mod_to_bin(Path, Mod) of
+load_file_1(Mod, From, St) ->
+    case get_object_code(St, Mod) of
 	error ->
 	    {reply,{error,nofile},St};
 	{Mod,Binary,File} ->
 	    try_load_module_1(File, Mod, Binary, From, St)
     end.
 
-mod_to_bin([Dir|Tail], Mod) ->
-    File = filename:append(Dir, atom_to_list(Mod) ++ objfile_extension()),
+get_object_code(#state{path=Path}, Mod) when is_atom(Mod) ->
+    ModStr = atom_to_list(Mod),
+    case erl_prim_loader:is_basename(ModStr) of
+        true ->
+            mod_to_bin(Path, Mod, ModStr ++ objfile_extension());
+        false ->
+            error
+    end.
+
+mod_to_bin([Dir|Tail], Mod, ModFile) ->
+    File = filename:append(Dir, ModFile),
     case erl_prim_loader:get_file(File) of
 	error -> 
-	    mod_to_bin(Tail, Mod);
+	    mod_to_bin(Tail, Mod, ModFile);
 	{ok,Bin,_} ->
 	    case filename:pathtype(File) of
 		absolute ->
@@ -1203,10 +1211,9 @@ mod_to_bin([Dir|Tail], Mod) ->
 		    {Mod,Bin,absname(File)}
 	    end
     end;
-mod_to_bin([], Mod) ->
+mod_to_bin([], Mod, ModFile) ->
     %% At last, try also erl_prim_loader's own method
-    File = to_list(Mod) ++ objfile_extension(),
-    case erl_prim_loader:get_file(File) of
+    case erl_prim_loader:get_file(ModFile) of
 	error -> 
 	    error;     % No more alternatives !
 	{ok,Bin,FName} ->
@@ -1427,14 +1434,26 @@ all_loaded(Db) ->
 
 -spec error_msg(io:format(), [term()]) -> 'ok'.
 error_msg(Format, Args) ->
-    Msg = {notify,{error, group_leader(), {self(), Format, Args}}},
-    error_logger ! Msg,
+    %% This is equal to calling logger:error/3 which we don't want to
+    %% do from code_server. We don't want to call logger:timestamp()
+    %% either.
+    logger ! {log,error,Format,Args,
+              #{pid=>self(),
+                gl=>group_leader(),
+                time=>os:system_time(microsecond),
+                error_logger=>#{tag=>error}}},
     ok.
 
 -spec info_msg(io:format(), [term()]) -> 'ok'.
 info_msg(Format, Args) ->
-    Msg = {notify,{info_msg, group_leader(), {self(), Format, Args}}},
-    error_logger ! Msg,
+    %% This is equal to calling logger:info/3 which we don't want to
+    %% do from code_server. We don't want to call logger:timestamp()
+    %% either.
+    logger ! {log,info,Format,Args,
+              #{pid=>self(),
+                gl=>group_leader(),
+                time=>os:system_time(microsecond),
+                error_logger=>#{tag=>info_msg}}},
     ok.
 
 objfile_extension() ->

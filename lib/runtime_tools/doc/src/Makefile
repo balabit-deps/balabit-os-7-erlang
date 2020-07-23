@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1999-2016. All Rights Reserved.
+# Copyright Ericsson AB 1999-2018. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,7 +41,13 @@ RELSYSDIR = $(RELEASE_PATH)/lib/$(APPLICATION)-$(VSN)
 # Target Specs
 # ----------------------------------------------------
 XML_APPLICATION_FILES = ref_man.xml
-XML_REF3_FILES = dbg.xml dyntrace.xml erts_alloc_config.xml system_information.xml msacc.xml
+XML_REF3_FILES = \
+	dbg.xml \
+	dyntrace.xml \
+	erts_alloc_config.xml \
+	system_information.xml \
+	msacc.xml \
+	scheduler.xml
 XML_REF6_FILES = runtime_tools_app.xml
 
 XML_PART_FILES = part.xml
@@ -54,8 +60,9 @@ BOOK_FILES = book.xml
 XML_FILES = \
 	$(BOOK_FILES) $(XML_CHAPTER_FILES) \
 	$(XML_PART_FILES) $(XML_REF3_FILES) \
-	$(XML_REF6_FILES) $(XML_APPLICATION_FILES) \
-	$(GENERATED_XML_FILES)
+	$(XML_REF6_FILES) $(XML_APPLICATION_FILES)
+
+XML_GEN_FILES = $(GENERATED_XML_FILES:%=$(XMLDIR)/%)
 
 GIF_FILES =
 
@@ -91,7 +98,7 @@ SPECS_FLAGS = -I../../include -I../../../kernel/src
 # Targets
 # ----------------------------------------------------
 
-%.xml: $(ERL_TOP)/HOWTO/%.md $(ERL_TOP)/make/emd2exml
+$(XMLDIR)/%.xml: $(ERL_TOP)/HOWTO/%.md $(ERL_TOP)/make/emd2exml
 	$(ERL_TOP)/make/emd2exml $< $@
 
 $(HTMLDIR)/%.gif: %.gif
@@ -113,6 +120,7 @@ debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(MAN6DIR)/*
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)

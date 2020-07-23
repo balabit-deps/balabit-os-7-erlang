@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -55,16 +55,22 @@ basic_tests() ->
 init_per_suite(Config) ->
     ssh:start(),
     ?CHECK_CRYPTO(
-       case load_engine() of
-           {ok,E} -> 
-               [{engine,E}|Config];
-           {error, notsup} ->
-               {skip, "Engine not supported on this OpenSSL version"};
-           {error, bad_engine_id} ->
-               {skip, "Dynamic Engine not supported"};
-           Other ->
-               ct:log("Engine load failed: ~p",[Other]),
-               {fail, "Engine load failed"}
+       case crypto:info_lib() of
+           [{_,_, <<"OpenSSL 1.0.1s-freebsd  1 Mar 2016">>}] ->
+               {skip, "Strange Engine stuff"};
+
+           _ ->
+               case load_engine() of
+                   {ok,E} ->
+                       [{engine,E}|Config];
+                   {error, notsup} ->
+                       {skip, "Engine not supported on this OpenSSL version"};
+                   {error, bad_engine_id} ->
+                       {skip, "Dynamic Engine not supported"};
+                   Other ->
+                       ct:log("Engine load failed: ~p",[Other]),
+                       {fail, "Engine load failed"}
+               end
        end
       ).
 
@@ -120,10 +126,17 @@ simple_connect(Config) ->
 load_engine() ->
     case crypto:get_test_engine() of
         {ok, Engine} ->
-            try crypto:engine_load(<<"dynamic">>,
+            try
+                %% The test engine has it's own fake rsa sign/verify that
+                %% you don't want to use, so exclude it from methods to load:
+                Methods = 
+                    crypto:engine_get_all_methods() -- [engine_method_rsa],
+                crypto:engine_load(<<"dynamic">>,
                                    [{<<"SO_PATH">>, Engine},
                                     <<"LOAD">>],
-                                   [])
+                                   [],
+                                   Methods
+                                  )
             catch
                 error:notsup ->
                     {error, notsup}

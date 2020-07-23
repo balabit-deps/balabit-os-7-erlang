@@ -830,11 +830,11 @@ do_send_v1_trap(Enter, Spec, V1Res, NVbs, ExtraInfo, NetIf, SysUpTime) ->
 		case lists:keyfind(transportDomainUdpIpv4, 1, Transports) of
 		    false ->
 			?vtrace(
-			   "snmpa_trap: can not send v1 trap "
+			   "snmpa_trap: cannot send v1 trap "
 			   "without IPv4 domain: ~p",
 			   [Transports]),
 			user_err(
-			   "snmpa_trap: can not send v1 trap "
+			   "snmpa_trap: cannot send v1 trap "
 			   "without IPv4 domain: ~p",
 			   [Transports]);
 		    DomainAddr ->
@@ -917,7 +917,7 @@ do_send_v2_trap(Recvs, Vbs, ExtraInfo, NetIf) ->
     TrapPdu = make_v2_notif_pdu(Vbs, 'snmpv2-trap'),
     AddrCommunities = mk_addr_communities(Recvs),
     lists:foreach(fun({Community, Addrs}) ->
-			  ?vtrace("~n   send v2 trap to ~p",[Addrs]),
+			  ?vtrace("send v2 trap to ~p",[Addrs]),
 			  NetIf ! {send_pdu, 'version-2', TrapPdu,
 				   {community, Community}, Addrs, ExtraInfo}
 		  end, AddrCommunities),

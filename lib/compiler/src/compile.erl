@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,6 +31,9 @@
 %% Erlc interface.
 -export([compile/3,compile_beam/3,compile_asm/3,compile_core/3]).
 
+%% Utility functions for compiler passes.
+-export([run_sub_passes/2]).
+
 -export_type([option/0]).
 
 -include("erl_compile.hrl").
@@ -38,6 +41,8 @@
 
 -import(lists, [member/2,reverse/1,reverse/2,keyfind/3,last/1,
 		map/2,flatmap/2,foreach/2,foldr/3,any/2]).
+
+-define(SUB_PASS_TIMES, compile__sub_pass_times).
 
 %%----------------------------------------------------------------------
 
@@ -63,6 +68,7 @@
                   | {'ok', module(), binary(), warnings()}.
 -type err_ret()  :: 'error' | {'error', errors(), warnings()}.
 -type comp_ret() :: mod_ret() | bin_ret() | err_ret().
+
 
 %%----------------------------------------------------------------------
 
@@ -143,6 +149,30 @@ noenv_output_generated(Opts) ->
 
 env_compiler_options() -> env_default_opts().
 
+
+%%%
+%%% Run sub passes from a compiler pass.
+%%%
+
+-spec run_sub_passes([term()], term()) -> term().
+
+run_sub_passes(Ps, St) ->
+    case get(?SUB_PASS_TIMES) of
+        undefined ->
+            Runner = fun(_Name, Run, S) -> Run(S) end,
+            run_sub_passes_1(Ps, Runner, St);
+        Times when is_list(Times) ->
+            Runner = fun(Name, Run, S0) ->
+                             T1 = erlang:monotonic_time(),
+                             S = Run(S0),
+                             T2 = erlang:monotonic_time(),
+                             put(?SUB_PASS_TIMES,
+                                 [{Name,T2-T1}|get(?SUB_PASS_TIMES)]),
+                             S
+                     end,
+            run_sub_passes_1(Ps, Runner, St)
+    end.
+
 %%
 %%  Local functions
 %%
@@ -180,8 +210,11 @@ do_compile(Input, Opts0) ->
                               {error,Reason}
                       end
              end,
-    %% Dialyzer has already spawned workers.
-    case lists:member(dialyzer, Opts) of
+    %% Some tools, like Dialyzer, has already spawned workers
+    %% and spawning extra workers actually slow the compilation
+    %% down instead of speeding it up, so we provide a mechanism
+    %% to bypass the compiler process.
+    case lists:member(no_spawn_compiler_process, Opts) of
         true ->
             IntFun();
         false ->
@@ -203,7 +236,12 @@ expand_opts(Opts0) ->
 	       {_,_,undefined} -> [debug_info|Opts0];
 	       {_,_,_} -> Opts0
 	   end,
-    foldr(fun expand_opt/2, [], Opts).
+    %% iff,unless processing is to complex...
+    Opts1 = case proplists:is_defined(makedep_side_effect,Opts) of
+                true -> proplists:delete(makedep,Opts);
+                false -> Opts
+            end,
+    foldr(fun expand_opt/2, [], Opts1).
 
 expand_opt(basic_validation, Os) ->
     [no_code_generation,to_pp,binary|Os];
@@ -213,20 +251,32 @@ expand_opt(report, Os) ->
     [report_errors,report_warnings|Os];
 expand_opt(return, Os) ->
     [return_errors,return_warnings|Os];
+expand_opt(no_bsm3, Os) ->
+    %% The new bsm pass requires bsm3 instructions.
+    [no_bsm3,no_bsm_opt|Os];
 expand_opt(r16, Os) ->
-    [no_record_opt,no_utf8_atoms|Os];
+    expand_opt_before_21(Os);
 expand_opt(r17, Os) ->
-    [no_record_opt,no_utf8_atoms|Os];
+    expand_opt_before_21(Os);
 expand_opt(r18, Os) ->
-    [no_record_opt,no_utf8_atoms|Os];
+    expand_opt_before_21(Os);
 expand_opt(r19, Os) ->
-    [no_record_opt,no_utf8_atoms|Os];
+    expand_opt_before_21(Os);
+expand_opt(r20, Os) ->
+    expand_opt_before_21(Os);
+expand_opt(r21, Os) ->
+    [no_put_tuple2 | expand_opt(no_bsm3, Os)];
 expand_opt({debug_info_key,_}=O, Os) ->
     [encrypt_debug_info,O|Os];
-expand_opt(no_float_opt, Os) ->
-    %%Turn off the entire type optimization pass.
-    [no_topt|Os];
+expand_opt(no_type_opt, Os) ->
+    [no_ssa_opt_type_start,
+     no_ssa_opt_type_continue,
+     no_ssa_opt_type_finish | Os];
 expand_opt(O, Os) -> [O|Os].
+
+expand_opt_before_21(Os) ->
+    [no_put_tuple2, no_get_hd_tl, no_ssa_opt_record,
+     no_utf8_atoms | expand_opt(no_bsm3, Os)].
 
 %% format_error(ErrorDescriptor) -> string()
 
@@ -240,6 +290,10 @@ format_error(bad_crypto_key) ->
     "invalid crypto key.";
 format_error(no_crypto_key) ->
     "no crypto key supplied.";
+format_error({unimplemented_instruction,Instruction}) ->
+    io_lib:fwrite("native-code compilation failed because of an "
+                  "unimplemented instruction (~s).",
+		  [Instruction]);
 format_error({native, E}) ->
     io_lib:fwrite("native-code compilation failed with reason: ~tP.",
 		  [E, 25]);
@@ -288,7 +342,7 @@ format_error_reason({Reason, Stack}) when is_list(Stack) ->
     end,
     FormatFun = fun (Term, _) -> io_lib:format("~tp", [Term]) end,
     [io_lib:format("~tp", [Reason]),"\n\n",
-     lib:format_stacktrace(1, Stack, StackFun, FormatFun)];
+     erl_error:format_stacktrace(1, Stack, StackFun, FormatFun)];
 format_error_reason(Reason) ->
     io_lib:format("~tp", [Reason]).
 
@@ -380,16 +434,56 @@ fold_comp([{Name,Pass}|Ps], Run, Code0, St0) ->
     end;
 fold_comp([], _Run, Code, St) -> {ok,Code,St}.
 
+run_sub_passes_1([{Name,Run}|Ps], Runner, St0)
+  when is_atom(Name), is_function(Run, 1) ->
+    try Runner(Name, Run, St0) of
+        St ->
+            run_sub_passes_1(Ps, Runner, St)
+    catch
+        C:E:Stk ->
+            io:format("Sub pass ~s\n", [Name]),
+            erlang:raise(C, E, Stk)
+    end;
+run_sub_passes_1([], _, St) -> St.
+
 run_tc({Name,Fun}, Code, St) ->
+    put(?SUB_PASS_TIMES, []),
     T1 = erlang:monotonic_time(),
     Val = (catch Fun(Code, St)),
     T2 = erlang:monotonic_time(),
-    Elapsed = erlang:convert_time_unit(T2 - T1, native, millisecond),
+    Times = erase(?SUB_PASS_TIMES),
+    Elapsed = erlang:convert_time_unit(T2 - T1, native, microsecond),
     Mem0 = erts_debug:flat_size(Val)*erlang:system_info(wordsize),
     Mem = lists:flatten(io_lib:format("~.1f kB", [Mem0/1024])),
     io:format(" ~-30s: ~10.3f s ~12s\n",
-	      [Name,Elapsed/1000,Mem]),
+	      [Name,Elapsed/1000000,Mem]),
+    print_times(Times, Name),
     Val.
+
+print_times(Times0, Name) ->
+    Fam0 = sofs:relation(Times0),
+    Fam1 = sofs:rel2fam(Fam0),
+    Fam2 = sofs:to_external(Fam1),
+    Fam3 = [{W,lists:sum(Times)} || {W,Times} <- Fam2],
+    Fam = reverse(lists:keysort(2, Fam3)),
+    Total = case lists:sum([T || {_,T} <- Fam]) of
+                0 -> 1;
+                Total0 -> Total0
+            end,
+    case Fam of
+        [] ->
+            ok;
+        [_|_] ->
+            io:format("    %% Sub passes of ~s from slowest to fastest:\n", [Name]),
+            print_times_1(Fam, Total)
+    end.
+
+print_times_1([{Name,T}|Ts], Total) ->
+    Elapsed = erlang:convert_time_unit(T, native, microsecond),
+    io:format("    ~-27s: ~10.3f s ~3w %\n",
+              [Name,Elapsed/1000000,round(100*T/Total)]),
+    print_times_1(Ts, Total);
+print_times_1([], _Total) -> ok.
 
 run_eprof({Name,Fun}, Code, Name, St) ->
     io:format("~p: Running eprof\n", [Name]),
@@ -674,6 +768,7 @@ select_list_passes_1([], _, Acc) ->
 standard_passes() ->
     [?pass(transform_module),
 
+     {iff,makedep_side_effect,?pass(makedep_and_output)},
      {iff,makedep,[
 	 ?pass(makedep),
 	 {unless,binary,?pass(makedep_output)}
@@ -706,14 +801,16 @@ core_passes() ->
       [{unless,no_copt,
        [{core_old_inliner,fun test_old_inliner/1,fun core_old_inliner/2},
 	{iff,doldinline,{listing,"oldinline"}},
-	{pass,sys_core_fold},
+	{unless,no_fold,{pass,sys_core_fold}},
 	{iff,dcorefold,{listing,"corefold"}},
 	{core_inline_module,fun test_core_inliner/1,fun core_inline_module/2},
 	{iff,dinline,{listing,"inline"}},
         {core_fold_after_inlining,fun test_any_inliner/1,
          fun core_fold_module_after_inlining/2},
+        {iff,dcopt,{listing,"copt"}},
+        {unless,no_alias,{pass,sys_core_alias}},
+        {iff,dalias,{listing,"core_alias"}},
 	?pass(core_transforms)]},
-       {iff,dcopt,{listing,"copt"}},
        {iff,'to_core',{done,"core"}}]}
      | kernel_passes()].
 
@@ -721,8 +818,6 @@ kernel_passes() ->
     %% Optimizations that must be done after all other optimizations.
     [{pass,sys_core_bsm},
      {iff,dcbsm,{listing,"core_bsm"}},
-     {pass,sys_core_dsetel},
-     {iff,dsetel,{listing,"dsetel"}},
 
      {iff,clint,?pass(core_lint_module)},
      {iff,core,?pass(save_core_code)},
@@ -731,10 +826,30 @@ kernel_passes() ->
      ?pass(v3_kernel),
      {iff,dkern,{listing,"kernel"}},
      {iff,'to_kernel',{done,"kernel"}},
-     {pass,v3_life},
-     {iff,dlife,{listing,"life"}},
-     {pass,v3_codegen},
-     {iff,dcg,{listing,"codegen"}}
+     {pass,beam_kernel_to_ssa},
+     {iff,dssa,{listing,"ssa"}},
+     {iff,ssalint,{pass,beam_ssa_lint}},
+     {delay,
+      [{unless,no_share_opt,{pass,beam_ssa_share}},
+       {iff,dssashare,{listing,"ssashare"}},
+       {iff,ssalint,{pass,beam_ssa_lint}},
+       {unless,no_bsm_opt,{pass,beam_ssa_bsm}},
+       {iff,dssabsm,{listing,"ssabsm"}},
+       {iff,ssalint,{pass,beam_ssa_lint}},
+       {unless,no_fun_opt,{pass,beam_ssa_funs}},
+       {iff,dssafuns,{listing,"ssafuns"}},
+       {iff,ssalint,{pass,beam_ssa_lint}},
+       {unless,no_ssa_opt,{pass,beam_ssa_opt}},
+       {iff,dssaopt,{listing,"ssaopt"}},
+       {iff,ssalint,{pass,beam_ssa_lint}},
+       {unless,no_recv_opt,{pass,beam_ssa_recv}},
+       {iff,drecv,{listing,"recv"}}]},
+     {pass,beam_ssa_pre_codegen},
+     {iff,dprecg,{listing,"precodegen"}},
+     {iff,ssalint,{pass,beam_ssa_lint}},
+     {pass,beam_ssa_codegen},
+     {iff,dcg,{listing,"codegen"}},
+     {iff,doldcg,{listing,"codegen"}}
      | asm_passes()].
 
 asm_passes() ->
@@ -743,32 +858,16 @@ asm_passes() ->
       [{pass,beam_a},
        {iff,da,{listing,"a"}},
        {unless,no_postopt,
-	[{unless,no_reorder,{pass,beam_reorder}},
-	 {iff,dre,{listing,"reorder"}},
-	 {pass,beam_block},
+	[{pass,beam_block},
 	 {iff,dblk,{listing,"block"}},
 	 {unless,no_except,{pass,beam_except}},
 	 {iff,dexcept,{listing,"except"}},
-	 {unless,no_bs_opt,{pass,beam_bs}},
-	 {iff,dbs,{listing,"bs"}},
-	 {unless,no_topt,{pass,beam_type}},
-	 {iff,dtype,{listing,"type"}},
-	 {pass,beam_split},
-	 {iff,dsplit,{listing,"split"}},
-	 {unless,no_dead,{pass,beam_dead}},
-	 {iff,ddead,{listing,"dead"}},
 	 {unless,no_jopt,{pass,beam_jump}},
 	 {iff,djmp,{listing,"jump"}},
 	 {unless,no_peep_opt,{pass,beam_peep}},
 	 {iff,dpeep,{listing,"peep"}},
 	 {pass,beam_clean},
 	 {iff,dclean,{listing,"clean"}},
-	 {unless,no_bsm_opt,{pass,beam_bsm}},
-	 {iff,dbsm,{listing,"bsm"}},
-	 {unless,no_recv_opt,{pass,beam_receive}},
-	 {iff,drecv,{listing,"recv"}},
-	 {unless,no_record_opt,{pass,beam_record}},
-	 {iff,drecord,{listing,"record"}},
 	 {unless,no_stack_trimming,{pass,beam_trim}},
 	 {iff,dtrim,{listing,"trim"}},
 	 {pass,beam_flatten}]},
@@ -777,7 +876,9 @@ asm_passes() ->
        %% need to do a few clean-ups to code.
        {iff,no_postopt,[{pass,beam_clean}]},
 
+       {iff,diffable,?pass(diffable)},
        {pass,beam_z},
+       {iff,diffable,{listing,"S"}},
        {iff,dz,{listing,"z"}},
        {iff,dopt,{listing,"optimize"}},
        {iff,'S',{listing,"S"}},
@@ -787,7 +888,7 @@ asm_passes() ->
      | binary_passes()].
 
 binary_passes() ->
-    [{iff,'to_dis',{listing,"dis"}},
+    [{iff,'to_dis',?pass(to_dis)},
      {native_compile,fun test_native/1,fun native_compile/2},
      {unless,binary,?pass(save_binary,not_werror)}
     ].
@@ -921,11 +1022,17 @@ parse_module(_Code, St0) ->
     end.
 
 do_parse_module(DefEncoding, #compile{ifile=File,options=Opts,dir=Dir}=St) ->
+    SourceName0 = proplists:get_value(source, Opts, File),
+    SourceName = case member(deterministic, Opts) of
+                     true -> filename:basename(SourceName0);
+                     false -> SourceName0
+                 end,
     R = epp:parse_file(File,
-		       [{includes,[".",Dir|inc_paths(Opts)]},
-			{macros,pre_defs(Opts)},
-			{default_encoding,DefEncoding},
-			extra]),
+                       [{includes,[".",Dir|inc_paths(Opts)]},
+                        {source_name, SourceName},
+                        {macros,pre_defs(Opts)},
+                        {default_encoding,DefEncoding},
+                        extra]),
     case R of
 	{ok,Forms,Extra} ->
 	    Encoding = proplists:get_value(encoding, Extra),
@@ -1126,6 +1233,16 @@ core_lint_module(Code, St) ->
 	{error,Es,Ws} ->
 	    {error,St#compile{warnings=St#compile.warnings ++ Ws,
 			      errors=St#compile.errors ++ Es}}
+    end.
+
+%% makedep + output and continue
+makedep_and_output(Code0, St) ->
+    {ok,DepCode,St1} = makedep(Code0,St),
+    case makedep_output(DepCode, St1) of
+        {ok,_IgnoreCode,St2} ->
+            {ok,Code0,St2};
+        {error,St2} ->
+            {error,St2}
     end.
 
 makedep(Code0, #compile{ifile=Ifile,ofile=Ofile,options=Opts}=St) ->
@@ -1408,16 +1525,30 @@ encrypt_debug_info(DebugInfo, Key, Opts) ->
     end.
 
 cleanup_compile_options(Opts) ->
-    lists:filter(fun keep_compile_option/1, Opts).
+    IsDeterministic = lists:member(deterministic, Opts),
+    lists:filter(fun(Opt) ->
+                         keep_compile_option(Opt, IsDeterministic)
+                 end, Opts).
 
+%% Include paths and current directory don't affect compilation, but they might
+%% be helpful so we include them unless we're doing a deterministic build.
+keep_compile_option({i, _}, Deterministic) ->
+    not Deterministic;
+keep_compile_option({cwd, _}, Deterministic) ->
+    not Deterministic;
 %% We are storing abstract, not asm or core.
-keep_compile_option(from_asm) -> false;
-keep_compile_option(from_core) -> false;
+keep_compile_option(from_asm, _Deterministic) ->
+    false;
+keep_compile_option(from_core, _Deterministic) ->
+    false;
 %% Parse transform and macros have already been applied.
-keep_compile_option({parse_transform, _}) -> false;
-keep_compile_option({d, _, _}) -> false;
+keep_compile_option({parse_transform, _}, _Deterministic) ->
+    false;
+keep_compile_option({d, _, _}, _Deterministic) ->
+    false;
 %% Do not affect compilation result on future calls.
-keep_compile_option(Option) -> effects_code_generation(Option).
+keep_compile_option(Option, _Deterministic) ->
+    effects_code_generation(Option).
 
 start_crypto() ->
     try crypto:start() of
@@ -1448,14 +1579,32 @@ save_core_code(Code, St) ->
 beam_asm(Code0, #compile{ifile=File,extra_chunks=ExtraChunks,options=CompilerOpts}=St) ->
     case debug_info(St) of
 	{ok,DebugInfo,Opts0} ->
-	    Source = paranoid_absname(File),
 	    Opts1 = [O || O <- Opts0, effects_code_generation(O)],
 	    Chunks = [{<<"Dbgi">>, DebugInfo} | ExtraChunks],
-	    {ok,Code} = beam_asm:module(Code0, Chunks, Source, Opts1, CompilerOpts),
+	    CompileInfo = compile_info(File, CompilerOpts, Opts1),
+	    {ok,Code} = beam_asm:module(Code0, Chunks, CompileInfo, CompilerOpts),
 	    {ok,Code,St#compile{abstract_code=[]}};
 	{error,Es} ->
 	    {error,St#compile{errors=St#compile.errors ++ [{File,Es}]}}
     end.
+
+compile_info(File, CompilerOpts, Opts) ->
+    IsSlim = member(slim, CompilerOpts),
+    IsDeterministic = member(deterministic, CompilerOpts),
+    Info0 = proplists:get_value(compile_info, Opts, []),
+    Info1 =
+	case paranoid_absname(File) of
+	    [_|_] = Source when not IsSlim, not IsDeterministic ->
+		[{source,Source} | Info0];
+	    _ ->
+		Info0
+	end,
+    Info2 =
+	case IsDeterministic of
+	    false -> [{options,proplists:delete(compile_info, Opts)} | Info1];
+	    true -> Info1
+	end,
+    Info2.
 
 paranoid_absname(""=File) ->
     File;
@@ -1506,21 +1655,24 @@ native_compile_1(Code, St) ->
 	    case IgnoreErrors of
 		true ->
 		    Ws = [{St#compile.ifile,[{none,?MODULE,{native,R}}]}],
-		    {ok,St#compile{warnings=St#compile.warnings ++ Ws}};
+		    {ok,Code,St#compile{warnings=St#compile.warnings ++ Ws}};
 		false ->
 		    Es = [{St#compile.ifile,[{none,?MODULE,{native,R}}]}],
 		    {error,St#compile{errors=St#compile.errors ++ Es}}
 	    end
     catch
-	Class:R ->
-	    Stk = erlang:get_stacktrace(),
+        exit:{unimplemented_instruction,_}=Unimplemented ->
+            Ws = [{St#compile.ifile,
+                   [{none,?MODULE,Unimplemented}]}],
+            {ok,Code,St#compile{warnings=St#compile.warnings ++ Ws}};
+	Class:R:Stack ->
 	    case IgnoreErrors of
 		true ->
 		    Ws = [{St#compile.ifile,
-			   [{none,?MODULE,{native_crash,R,Stk}}]}],
-		    {ok,St#compile{warnings=St#compile.warnings ++ Ws}};
+			   [{none,?MODULE,{native_crash,R,Stack}}]}],
+		    {ok,Code,St#compile{warnings=St#compile.warnings ++ Ws}};
 		false ->
-		    erlang:raise(Class, R, Stk)
+		    erlang:raise(Class, R, Stack)
 	    end
     end.
 
@@ -1748,6 +1900,21 @@ listing(LFun, Ext, Code, St) ->
 	    {error,St#compile{errors=St#compile.errors ++ Es}}
     end.
 
+to_dis(Code, #compile{module=Module,ofile=Outfile}=St) ->
+    Loaded = code:is_loaded(Module),
+    Sticky = code:is_sticky(Module),
+    _ = [code:unstick_mod(Module) || Sticky],
+
+    {module,Module} = code:load_binary(Module, "", Code),
+    DestDir = filename:dirname(Outfile),
+    DisFile = filename:join(DestDir, atom_to_list(Module) ++ ".dis"),
+    ok = erts_debug:dis_to_file(Module, DisFile),
+
+    %% Restore loaded module
+    _ = [{module, Module} = code:load_file(Module) || Loaded =/= false],
+    [code:stick_mod(Module) || Sticky],
+    {ok,Code,St}.
+
 output_encoding(F, #compile{encoding = none}) ->
     ok = io:setopts(F, [{encoding, epp:default_encoding()}]);
 output_encoding(F, #compile{encoding = Encoding}) ->
@@ -1773,6 +1940,39 @@ restore_expand_module([F|Fs]) ->
     [F|restore_expand_module(Fs)];
 restore_expand_module([]) -> [].
 
+%%%
+%%% Transform the BEAM code to make it more friendly for
+%%% diffing: using function names instead of labels for
+%%% local calls and number labels relative to each function.
+%%%
+
+diffable(Code0, St) ->
+    {Mod,Exp,Attr,Fs0,NumLabels} = Code0,
+    EntryLabels0 = [{Entry,{Name,Arity}} ||
+                       {function,Name,Arity,Entry,_} <- Fs0],
+    EntryLabels = maps:from_list(EntryLabels0),
+    Fs = [diffable_fix_function(F, EntryLabels) || F <- Fs0],
+    Code = {Mod,Exp,Attr,Fs,NumLabels},
+    {ok,Code,St}.
+
+diffable_fix_function({function,Name,Arity,Entry0,Is0}, LabelMap0) ->
+    Entry = maps:get(Entry0, LabelMap0),
+    {Is1,LabelMap} = diffable_label_map(Is0, 1, LabelMap0, []),
+    Fb = fun(Old) -> error({no_fb,Old}) end,
+    Is = beam_utils:replace_labels(Is1, [], LabelMap, Fb),
+    {function,Name,Arity,Entry,Is}.
+
+diffable_label_map([{label,Old}|Is], New, Map, Acc) ->
+    case Map of
+        #{Old:=NewLabel} ->
+            diffable_label_map(Is, New, Map, [{label,NewLabel}|Acc]);
+        #{} ->
+            diffable_label_map(Is, New+1, Map#{Old=>New}, [{label,New}|Acc])
+    end;
+diffable_label_map([I|Is], New, Map, Acc) ->
+    diffable_label_map(Is, New, Map, [I|Acc]);
+diffable_label_map([], _New, Map, Acc) ->
+    {Acc,Map}.
 
 -spec options() -> 'ok'.
 
@@ -1893,22 +2093,25 @@ pre_load() ->
     L = [beam_a,
 	 beam_asm,
 	 beam_block,
-	 beam_bs,
-	 beam_bsm,
 	 beam_clean,
-	 beam_dead,
 	 beam_dict,
 	 beam_except,
 	 beam_flatten,
 	 beam_jump,
+	 beam_kernel_to_ssa,
 	 beam_opcodes,
 	 beam_peep,
-	 beam_receive,
-         beam_record,
-	 beam_reorder,
-	 beam_split,
+	 beam_ssa,
+	 beam_ssa_bsm,
+	 beam_ssa_codegen,
+	 beam_ssa_dead,
+         beam_ssa_funs,
+	 beam_ssa_opt,
+	 beam_ssa_pre_codegen,
+	 beam_ssa_recv,
+	 beam_ssa_share,
+	 beam_ssa_type,
 	 beam_trim,
-	 beam_type,
 	 beam_utils,
 	 beam_validator,
 	 beam_z,
@@ -1923,12 +2126,10 @@ pre_load() ->
 	 erl_lint,
 	 erl_parse,
 	 erl_scan,
+	 sys_core_alias,
 	 sys_core_bsm,
-	 sys_core_dsetel,
 	 sys_core_fold,
-	 v3_codegen,
 	 v3_core,
-	 v3_kernel,
-	 v3_life],
+	 v3_kernel],
     _ = code:ensure_modules_loaded(L),
     ok.

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -365,10 +365,10 @@ is_filename(T) ->
 
 shorten_filename(Name0) ->
     {ok,Cwd} = file:get_cwd(),
-    case lists:prefix(Cwd, Name0) of
-        false -> Name0;
-        true ->
-            case lists:nthtail(length(Cwd), Name0) of
+    case string:prefix(Name0, Cwd) of
+        nomatch -> Name0;
+        Rest ->
+            case unicode:characters_to_list(Rest) of
                 "/"++N -> N;
                 N -> N
             end
@@ -455,10 +455,14 @@ os_process_size() ->
     case os:type() of
         {unix, sunos} ->
             Size = os:cmd("ps -o vsz -p " ++ os:getpid() ++ " | tail -1"),
-            list_to_integer(lib:nonl(Size));
+            list_to_integer(nonl(Size));
         _ ->
             0
-    end.            
+    end.
+
+nonl([$\n]) -> [];
+nonl([]) -> [];
+nonl([H|T]) -> [H|nonl(T)].
 
 timeit(Name, Fun, St0) ->
     Time = runtime,
@@ -2196,8 +2200,8 @@ output_reduce(St0, State, Terminal,
                 St20;
             true ->
                 Ns = "Nss",
-                Tmp = string:join(lists:duplicate(NmbrOfDaughters - 1, "_"),
-                                  ","),
+                Tmp = lists:join(",",
+                                  lists:duplicate(NmbrOfDaughters - 1, "_")),
                 fwrite(St20, <<" [~s|Nss] = Ss,\n">>, [Tmp])
         end,
     St40 = case tokens(RuleNmbr, St30) of

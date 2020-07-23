@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2003</year><year>2017</year>
+      <year>2003</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -32,7 +32,7 @@
     <rev>A</rev>
     <file>erl_tar.xml</file>
   </header>
-  <module>erl_tar</module>
+  <module since="">erl_tar</module>
   <modulesummary>Unix 'tar' utility for reading and writing tar archives.
   </modulesummary>
   <description>
@@ -90,8 +90,8 @@
 
   <section>
     <title>Other Storage Media</title>
-    <p>The <seealso marker="inets:ftp"><c>ftp</c></seealso>
-      module (Inets) normally accesses the tar file on disk using
+    <p>The <seealso marker="ftp:ftp"><c>ftp</c></seealso>
+      module normally accesses the tar file on disk using
       the <seealso marker="kernel:file"><c>file</c></seealso> module.
       When other needs arise, you can define your own low-level Erlang
       functions to perform the writing and reading on the storage media;
@@ -127,7 +127,7 @@
 
   <funcs>
     <func>
-      <name>add(TarDescriptor, Filename, Options) -> RetValue</name>
+      <name since="">add(TarDescriptor, Filename, Options) -> RetValue</name>
       <fsummary>Add a file to an open tar file.</fsummary>
       <type>
         <v>TarDescriptor = term()</v>
@@ -136,6 +136,9 @@
         <v>Filename = filename()|{NameInArchive,FilenameOrBin}</v>
         <v>Options = [Option]</v>
         <v>Option = dereference|verbose|{chunks,ChunkSize}</v>
+           <v>|{atime,non_neg_integer()}|{mtime,non_neg_integer()}</v>
+           <v>|{ctime,non_neg_integer()}|{uid,non_neg_integer()}</v>
+           <v>|{gid,non_neg_integer()}</v>
         <v>ChunkSize = positive_integer()</v>
         <v>RetValue = ok|{error,{Filename,Reason}}</v>
         <v>Reason = term()</v>
@@ -167,12 +170,48 @@
               <seealso marker="ssh:ssh_sftp#open_tar/3">
               <c>ssh_sftp:open_tar/3</c></seealso>.</p>
           </item>
+          <tag><c>{atime,non_neg_integer()}</c></tag>
+          <item>
+            <p>Sets the last time, as
+	            <seealso marker="erts:time_correction#POSIX_Time">
+              POSIX time</seealso>, when the file was read. See also
+              <seealso marker="kernel:file#read_file_info/1">
+              <c>file:read_file_info/1</c></seealso>.</p>
+          </item>
+          <tag><c>{mtime,non_neg_integer()}</c></tag>
+          <item>
+            <p>Sets the last time, as
+	            <seealso marker="erts:time_correction#POSIX_Time">
+              POSIX time</seealso>, when the file was written. See also
+              <seealso marker="kernel:file#read_file_info/1">
+              <c>file:read_file_info/1</c></seealso>.</p>
+          </item>
+          <tag><c>{ctime,non_neg_integer()}</c></tag>
+          <item>
+            <p>Sets the time, as
+	            <seealso marker="erts:time_correction#POSIX_Time">
+              POSIX time</seealso>, when the file was created. See also
+              <seealso marker="kernel:file#read_file_info/1">
+              <c>file:read_file_info/1</c></seealso>.</p>
+          </item>
+          <tag><c>{uid,non_neg_integer()}</c></tag>
+          <item>
+            <p>Sets the file owner.
+              <seealso marker="kernel:file#read_file_info/1">
+              <c>file:read_file_info/1</c></seealso>.</p>
+          </item>
+          <tag><c>{gid,non_neg_integer()}</c></tag>
+          <item>
+            <p>Sets the group that the file owner belongs to.
+              <seealso marker="kernel:file#read_file_info/1">
+              <c>file:read_file_info/1</c></seealso>.</p>
+          </item>
         </taglist>
       </desc>
     </func>
 
     <func>
-      <name>add(TarDescriptor, FilenameOrBin, NameInArchive, Options) ->
+      <name since="">add(TarDescriptor, FilenameOrBin, NameInArchive, Options) ->
         RetValue </name>
       <fsummary>Add a file to an open tar file.</fsummary>
       <type>
@@ -194,7 +233,7 @@
     </func>
 
     <func>
-      <name>close(TarDescriptor)</name>
+      <name since="">close(TarDescriptor)</name>
       <fsummary>Close an open tar file.</fsummary>
       <type>
         <v>TarDescriptor = term()</v>
@@ -206,7 +245,7 @@
     </func>
 
     <func>
-      <name>create(Name, FileList) ->RetValue </name>
+      <name since="">create(Name, FileList) ->RetValue </name>
       <fsummary>Create a tar archive.</fsummary>
       <type>
         <v>Name = filename()</v>
@@ -225,7 +264,7 @@
     </func>
 
     <func>
-      <name>create(Name, FileList, OptionList)</name>
+      <name since="">create(Name, FileList, OptionList)</name>
       <fsummary>Create a tar archive with options.</fsummary>
       <type>
         <v>Name = filename()</v>
@@ -276,7 +315,7 @@
     </func>
 
     <func>
-      <name>extract(Name) -> RetValue</name>
+      <name since="">extract(Name) -> RetValue</name>
       <fsummary>Extract all files from a tar file.</fsummary>
       <type>
         <v>Name = filename() | {binary,binary()} | {file,Fd}</v>
@@ -300,7 +339,7 @@
     </func>
 
     <func>
-      <name>extract(Name, OptionList)</name>
+      <name since="">extract(Name, OptionList)</name>
       <fsummary>Extract files from a tar file.</fsummary>
       <type>
         <v>Name = filename() | {binary,binary()} | {file,Fd}</v>
@@ -372,19 +411,19 @@
     </func>
 
     <func>
-      <name>format_error(Reason) -> string()</name>
+      <name since="">format_error(Reason) -> string()</name>
       <fsummary>Convert error term to a readable string.</fsummary>
       <type>
         <v>Reason = term()</v>
       </type>
       <desc>
-        <p>Cconverts an error reason term to a human-readable error message
+        <p>Converts an error reason term to a human-readable error message
           string.</p>
       </desc>
     </func>
 
     <func>
-      <name>init(UserPrivate, AccessMode, Fun) ->
+      <name since="OTP 17.4">init(UserPrivate, AccessMode, Fun) ->
         {ok,TarDescriptor} | {error,Reason}</name>
       <fsummary>Create a <c>TarDescriptor</c> used in subsequent tar operations
         when defining own low-level storage access functions.</fsummary>
@@ -479,7 +518,7 @@ erl_tar:close(TarDesc)</code>
     </func>
 
     <func>
-      <name>open(Name, OpenModeList) -> RetValue</name>
+      <name since="">open(Name, OpenModeList) -> RetValue</name>
       <fsummary>Open a tar file for writing.</fsummary>
       <type>
         <v>Name = filename()</v>
@@ -526,7 +565,7 @@ erl_tar:close(TarDesc)</code>
     </func>
 
     <func>
-      <name>table(Name) -> RetValue</name>
+      <name since="">table(Name) -> RetValue</name>
       <fsummary>Retrieve the name of all files in a tar file.</fsummary>
       <type>
         <v>Name = filename()|{binary,binary()}|{file,file_descriptor()}</v>
@@ -539,7 +578,7 @@ erl_tar:close(TarDesc)</code>
     </func>
 
     <func>
-      <name>table(Name, Options)</name>
+      <name since="">table(Name, Options)</name>
       <fsummary>Retrieve name and information of all files in a tar file.
       </fsummary>
       <type>
@@ -551,7 +590,7 @@ erl_tar:close(TarDesc)</code>
     </func>
 
     <func>
-      <name>t(Name)</name>
+      <name since="">t(Name)</name>
       <fsummary>Print the name of each file in a tar file.</fsummary>
       <type>
         <v>Name = filename()|{binary,binary()}|{file,file_descriptor()}</v>
@@ -563,7 +602,7 @@ erl_tar:close(TarDesc)</code>
     </func>
 
     <func>
-      <name>tt(Name)</name>
+      <name since="">tt(Name)</name>
       <fsummary>Print name and information for each file in a tar file.
       </fsummary>
       <type>

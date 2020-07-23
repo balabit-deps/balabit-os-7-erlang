@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2004-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2004-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@
          handle_options/2
         ]).
 
--export_type([options/0
+-export_type([private_options/0
              ]).
 
 %%%================================================================
@@ -47,16 +47,23 @@
                                 default => any()
                                }.
 
+-type option_key() :: atom().
+
 -type option_declarations() :: #{ {option_key(),def} := option_declaration() }.
 
 -type error() :: {error,{eoptions,any()}} .
+
+-type private_options() :: #{socket_options   := socket_options(),
+                             internal_options := internal_options(),
+                             option_key()     => any()
+                            }.
 
 %%%================================================================
 %%%
 %%% Get an option
 %%%
 
--spec get_value(option_class(), option_key(), options(),
+-spec get_value(option_class(), option_key(), private_options(),
                 atom(), non_neg_integer()) -> any() | no_return().
 
 get_value(Class, Key, Opts, _CallerMod, _CallerLine) when is_map(Opts) ->
@@ -69,7 +76,7 @@ get_value(Class, Key, Opts, _CallerMod, _CallerLine) ->
     error({bad_options,Class, Key, Opts, _CallerMod, _CallerLine}).
 
 
--spec get_value(option_class(), option_key(), options(), fun(() -> any()),
+-spec get_value(option_class(), option_key(), private_options(), fun(() -> any()),
                 atom(), non_neg_integer()) -> any() | no_return().
 
 get_value(socket_options, Key, Opts, DefFun, _CallerMod, _CallerLine) when is_map(Opts) ->
@@ -91,8 +98,8 @@ get_value(Class, Key, Opts, _DefFun, _CallerMod, _CallerLine) ->
 %%% Put an option
 %%%
 
--spec put_value(option_class(), option_in(), options(),
-                atom(), non_neg_integer()) -> options().
+-spec put_value(option_class(), option_in(), private_options(),
+                atom(), non_neg_integer()) -> private_options().
 
 put_value(user_options, KeyVal, Opts, _CallerMod, _CallerLine) when is_map(Opts) ->
     put_user_value(KeyVal, Opts);
@@ -131,8 +138,8 @@ put_socket_value(A, SockOpts) when is_atom(A) ->
 %%% Delete an option
 %%%
 
--spec delete_key(option_class(), option_key(), options(),
-                 atom(), non_neg_integer()) -> options().
+-spec delete_key(option_class(), option_key(), private_options(),
+                 atom(), non_neg_integer()) -> private_options().
 
 delete_key(internal_options, Key, Opts, _CallerMod, _CallerLine) when is_map(Opts) ->
     InternalOpts = maps:get(internal_options,Opts),
@@ -144,9 +151,7 @@ delete_key(internal_options, Key, Opts, _CallerMod, _CallerLine) when is_map(Opt
 %%% Initialize the options
 %%%
 
--spec handle_options(role(), proplists:proplist()) -> options() | error() .
-
--spec handle_options(role(), proplists:proplist(), options()) -> options() | error() .
+-spec handle_options(role(), client_options()|daemon_options()) -> private_options() | error() .
 
 handle_options(Role, PropList0) ->
     handle_options(Role, PropList0, #{socket_options   => [],
@@ -155,7 +160,7 @@ handle_options(Role, PropList0) ->
                                      }).
 
 handle_options(Role, PropList0, Opts0) when is_map(Opts0),
-                                             is_list(PropList0) ->
+                                            is_list(PropList0) ->
     PropList1 = proplists:unfold(PropList0), 
     try
         OptionDefinitions = default(Role),
@@ -268,17 +273,19 @@ default(server) ->
            },
 
       {shell, def} =>
-          #{default => {shell, start, []},
+          #{default => ?DEFAULT_SHELL,
             chk => fun({M,F,A}) -> is_atom(M) andalso is_atom(F) andalso is_list(A);
                       (V) -> check_function1(V) orelse check_function2(V)
                    end,
             class => user_options
            },
 
-      {exec, def} =>                 % FIXME: need some archeology....
+      {exec, def} =>
           #{default => undefined,
-            chk => fun({M,F,_}) -> is_atom(M) andalso is_atom(F);
-                      (V) -> is_function(V)
+            chk => fun({direct, V}) ->  check_function1(V) orelse check_function2(V) orelse check_function3(V);
+                      %% Compatibility (undocumented):
+                      ({M,F,A}) -> is_atom(M) andalso is_atom(F) andalso is_list(A);
+                      (V) -> check_function1(V) orelse check_function2(V) orelse check_function3(V)
                    end,
             class => user_options
            },
@@ -427,6 +434,18 @@ default(client) ->
             class => user_options
            },
 
+%%% Not yet implemented      {ed25519_pass_phrase, def} =>
+%%% Not yet implemented          #{default => undefined,
+%%% Not yet implemented            chk => fun check_string/1,
+%%% Not yet implemented            class => user_options
+%%% Not yet implemented           },
+%%% Not yet implemented
+%%% Not yet implemented      {ed448_pass_phrase, def} =>
+%%% Not yet implemented          #{default => undefined,
+%%% Not yet implemented            chk => fun check_string/1,
+%%% Not yet implemented            class => user_options
+%%% Not yet implemented           },
+%%% Not yet implemented
       {silently_accept_hosts, def} =>
           #{default => false,
             chk => fun check_silently_accept_hosts/1,
@@ -439,9 +458,9 @@ default(client) ->
             class => user_options
            },
 
-      {pref_public_key_algs, def} =>
-          #{default => ssh_transport:default_algorithms(public_key),
-            chk => fun check_pref_public_key_algs/1,
+      {save_accepted_host, def} =>
+          #{default => true,
+            chk => fun erlang:is_boolean/1,
             class => user_options
            },
 
@@ -509,6 +528,12 @@ default(common) ->
              chk => fun(V) -> check_string(V) andalso check_dir(V) end,
              class => user_options
             },
+
+      {pref_public_key_algs, def} =>
+          #{default => ssh_transport:default_algorithms(public_key),
+            chk => fun check_pref_public_key_algs/1,
+            class => user_options
+           },
 
        {preferred_algorithms, def} =>
            #{default => ssh:default_algorithms(),
@@ -586,9 +611,24 @@ default(common) ->
              class => user_options
             },
 
-      {rekey_limit, def} =>                     % FIXME: Why not common?
-          #{default => 1024000000,
-            chk => fun check_non_neg_integer/1,
+      {rekey_limit, def} =>
+          #{default => {3600000, 1024000000}, % {1 hour, 1 GB}
+            chk => fun({infinity, infinity}) ->
+                           true;
+                      ({Mins, infinity}) when is_integer(Mins), Mins>0 ->
+                           {true, {Mins*60*1000, infinity}};
+                      ({infinity, Bytes}) when is_integer(Bytes), Bytes>=0 ->
+                           true;
+                      ({Mins, Bytes}) when is_integer(Mins), Mins>0,
+                                           is_integer(Bytes), Bytes>=0 ->
+                           {true, {Mins*60*1000, Bytes}};
+                      (infinity) ->
+                           {true, {3600000, infinity}};
+                      (Bytes) when is_integer(Bytes), Bytes>=0 ->
+                           {true, {3600000, Bytes}};
+                      (_) ->
+                           false
+                   end,
             class => user_options
            },
 

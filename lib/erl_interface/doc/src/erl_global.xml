@@ -35,6 +35,15 @@
   <lib>erl_global</lib>
   <libsummary>Access globally registered names.</libsummary>
   <description>
+    <note><p>The support for VxWorks is deprecated as of OTP 22, and
+    will be removed in OTP 23.</p></note>
+    <note><p>The old legacy <c>erl_interface</c> library (functions
+    with prefix <c>erl_</c>) is deprecated as of OTP 22, and will be
+    removed in OTP 23. This does not apply to the <c>ei</c>
+    library. Reasonably new <c>gcc</c> compilers will issue deprecation
+    warnings. In order to disable these warnings, define the macro
+    <c>EI_NO_DEPR_WARN</c>.</p></note>
+    
     <p>This module provides support for registering, looking
       up, and unregistering names in the <c>global</c> module.
       For more information, see
@@ -48,7 +57,7 @@
 
   <funcs>
     <func>
-      <name><ret>char **</ret><nametext>erl_global_names(fd,count)</nametext></name>
+      <name since=""><ret>char **</ret><nametext>erl_global_names(fd,count)</nametext></name>
       <fsummary>Obtain list of global names.</fsummary>
       <type>
         <v>int fd;</v>
@@ -79,7 +88,7 @@
     </func>
 
     <func>
-      <name><ret>int</ret><nametext>erl_global_register(fd,name,pid)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_global_register(fd,name,pid)</nametext></name>
       <fsummary>Register a name in global.</fsummary>
       <type>
         <v>int fd;</v>
@@ -103,7 +112,7 @@
     </func>
 
     <func>
-      <name><ret>int</ret><nametext>erl_global_unregister(fd,name)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_global_unregister(fd,name)</nametext></name>
       <fsummary>Unregister a name from global.</fsummary>
       <type>
         <v>int fd;</v>
@@ -122,7 +131,7 @@
     </func>
 
     <func>
-      <name><ret>ETERM *</ret><nametext>erl_global_whereis(fd,name,node)</nametext></name>
+      <name since=""><ret>ETERM *</ret><nametext>erl_global_whereis(fd,name,node)</nametext></name>
       <fsummary>Look up a name in global.</fsummary>
       <type>
         <v>int fd;</v>

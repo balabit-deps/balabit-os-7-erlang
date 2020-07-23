@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>1996</year><year>2016</year>
+      <year>1996</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -32,7 +32,7 @@
     <rev>C</rev>
     <file>digraph.xml</file>
   </header>
-  <module>digraph</module>
+  <module since="">digraph</module>
   <modulesummary>Directed graphs.</modulesummary>
   <description>
     <p>This module provides a version of labeled
@@ -144,9 +144,9 @@
 
   <funcs>
     <func>
-      <name name="add_edge" arity="3"/>
-      <name name="add_edge" arity="4"/>
-      <name name="add_edge" arity="5"/>
+      <name name="add_edge" arity="3" since=""/>
+      <name name="add_edge" arity="4" since=""/>
+      <name name="add_edge" arity="5" since=""/>
       <fsummary>Add an edge to a digraph.</fsummary>
       <type name="add_edge_err_rsn"/>
       <desc>
@@ -170,6 +170,10 @@
         <p>If the edge would create a cycle in
           an <seealso marker="#acyclic_digraph">acyclic digraph</seealso>,
           <c>{error,&nbsp;{bad_edge,&nbsp;<anno>Path</anno>}}</c> is returned.
+          If <c><anno>G</anno></c> already has an edge with value
+          <c><anno>E</anno></c> connecting a different pair of vertices,
+          <c>{error,&nbsp;{bad_edge,&nbsp;[<anno>V1</anno>,&nbsp;<anno>V2</anno>]}}</c>
+          is returned.
           If either of <c><anno>V1</anno></c> or <c><anno>V2</anno></c> is not
           a vertex of digraph <c><anno>G</anno></c>,
           <c>{error,&nbsp;{bad_vertex,&nbsp;</c><anno>V</anno><c>}}</c> is
@@ -179,9 +183,9 @@
     </func>
 
     <func>
-      <name name="add_vertex" arity="1"/>
-      <name name="add_vertex" arity="2"/>
-      <name name="add_vertex" arity="3"/>
+      <name name="add_vertex" arity="1" since=""/>
+      <name name="add_vertex" arity="2" since=""/>
+      <name name="add_vertex" arity="3" since=""/>
       <fsummary>Add or modify a vertex of a digraph.</fsummary>
       <desc>
         <p><c>add_vertex/3</c> creates (or modifies) vertex
@@ -200,7 +204,7 @@
     </func>
 
     <func>
-      <name name="del_edge" arity="2"/>
+      <name name="del_edge" arity="2" since=""/>
       <fsummary>Delete an edge from a digraph.</fsummary>
       <desc>
         <p>Deletes edge <c><anno>E</anno></c> from digraph
@@ -209,7 +213,7 @@
     </func>
 
     <func>
-      <name name="del_edges" arity="2"/>
+      <name name="del_edges" arity="2" since=""/>
       <fsummary>Delete edges from a digraph.</fsummary>
       <desc>
         <p>Deletes the edges in list <c><anno>Edges</anno></c> from digraph
@@ -218,7 +222,7 @@
     </func>
 
     <func>
-      <name name="del_path" arity="3"/>
+      <name name="del_path" arity="3" since=""/>
       <fsummary>Delete paths from a digraph.</fsummary>
       <desc>
         <p>Deletes edges from digraph <c><anno>G</anno></c> until there are no
@@ -248,7 +252,7 @@
     </func>
 
     <func>
-      <name name="del_vertex" arity="2"/>
+      <name name="del_vertex" arity="2" since=""/>
       <fsummary>Delete a vertex from a digraph.</fsummary>
       <desc>
         <p>Deletes vertex <c><anno>V</anno></c> from digraph
@@ -261,7 +265,7 @@
     </func>
 
     <func>
-      <name name="del_vertices" arity="2"/>
+      <name name="del_vertices" arity="2" since=""/>
       <fsummary>Delete vertices from a digraph.</fsummary>
       <desc>
         <p>Deletes the vertices in list <c><anno>Vertices</anno></c> from
@@ -270,7 +274,7 @@
     </func>
 
     <func>
-      <name name="delete" arity="1"/>
+      <name name="delete" arity="1" since=""/>
       <fsummary>Delete a digraph.</fsummary>
       <desc>
         <p>Deletes digraph <c><anno>G</anno></c>. This call is important
@@ -281,7 +285,7 @@
     </func>
 
     <func>
-      <name name="edge" arity="2"/>
+      <name name="edge" arity="2" since=""/>
       <fsummary>Return the vertices and the label of an edge of a digraph.
       </fsummary>
       <desc>
@@ -299,7 +303,7 @@
     </func>
 
     <func>
-      <name name="edges" arity="1"/>
+      <name name="edges" arity="1" since=""/>
       <fsummary>Return all edges of a digraph.</fsummary>
       <desc>
         <p>Returns a list of all edges of digraph <c><anno>G</anno></c>, in
@@ -308,7 +312,7 @@
     </func>
 
     <func>
-      <name name="edges" arity="2"/>
+      <name name="edges" arity="2" since=""/>
       <fsummary>Return the edges emanating from or incident on a vertex of
         a digraph.</fsummary>
       <desc>
@@ -320,7 +324,7 @@
     </func>
 
     <func>
-      <name name="get_cycle" arity="2"/>
+      <name name="get_cycle" arity="2" since=""/>
       <fsummary>Find one cycle in a digraph.</fsummary>
       <desc>
         <p>If a <seealso marker="#simple_cycle">simple cycle</seealso> of
@@ -337,7 +341,7 @@
     </func>
 
     <func>
-      <name name="get_path" arity="3"/>
+      <name name="get_path" arity="3" since=""/>
       <fsummary>Find one path in a digraph.</fsummary>
       <desc>
         <p>Tries to find
@@ -353,7 +357,7 @@
     </func>
 
     <func>
-      <name name="get_short_cycle" arity="2"/>
+      <name name="get_short_cycle" arity="2" since=""/>
       <fsummary>Find one short cycle in a digraph.</fsummary>
       <desc>
         <p>Tries to find an as short as possible
@@ -371,7 +375,7 @@
     </func>
 
     <func>
-      <name name="get_short_path" arity="3"/>
+      <name name="get_short_path" arity="3" since=""/>
       <fsummary>Find one short path in a digraph.</fsummary>
       <desc>
         <p>Tries to find an as short as possible
@@ -388,7 +392,7 @@
     </func>
 
     <func>
-      <name name="in_degree" arity="2"/>
+      <name name="in_degree" arity="2" since=""/>
       <fsummary>Return the in-degree of a vertex of a digraph.</fsummary>
       <desc>
         <p>Returns the <seealso marker="#in_degree">in-degree</seealso> of
@@ -397,7 +401,7 @@
     </func>
 
     <func>
-      <name name="in_edges" arity="2"/>
+      <name name="in_edges" arity="2" since=""/>
       <fsummary>Return all edges incident on a vertex of a digraph.</fsummary>
       <desc>
         <p>Returns a list of all
@@ -408,7 +412,7 @@
     </func>
 
     <func>
-      <name name="in_neighbours" arity="2"/>
+      <name name="in_neighbours" arity="2" since=""/>
       <fsummary>Return all in-neighbors of a vertex of  a digraph.</fsummary>
       <desc>
         <p>Returns a list of
@@ -419,7 +423,7 @@
     </func>
 
     <func>
-      <name name="info" arity="1"/>
+      <name name="info" arity="1" since=""/>
       <fsummary>Return information about a digraph.</fsummary>
       <type name="d_cyclicity"/>
       <type name="d_protection"/>
@@ -449,7 +453,7 @@
     </func>
 
     <func>
-      <name name="new" arity="0"/>
+      <name name="new" arity="0" since=""/>
       <fsummary>Return a protected empty digraph, where cycles are allowed.
       </fsummary>
       <desc>
@@ -458,7 +462,7 @@
     </func>
 
     <func>
-      <name name="new" arity="1"/>
+      <name name="new" arity="1" since=""/>
       <fsummary>Create a new empty digraph.</fsummary>
       <type variable="Type"/>
       <type name="d_type"/>
@@ -488,7 +492,7 @@
     </func>
 
     <func>
-      <name name="no_edges" arity="1"/>
+      <name name="no_edges" arity="1" since=""/>
       <fsummary>Return the number of edges of a digraph.</fsummary>
       <desc>
         <p>Returns the number of edges of digraph <c><anno>G</anno></c>.</p>
@@ -496,7 +500,7 @@
     </func>
 
     <func>
-      <name name="no_vertices" arity="1"/>
+      <name name="no_vertices" arity="1" since=""/>
       <fsummary>Return the number of vertices of a digraph.</fsummary>
       <desc>
         <p>Returns the number of vertices of digraph <c><anno>G</anno></c>.</p>
@@ -504,7 +508,7 @@
     </func>
 
     <func>
-      <name name="out_degree" arity="2"/>
+      <name name="out_degree" arity="2" since=""/>
       <fsummary>Return the out-degree of a vertex of a digraph.</fsummary>
       <desc>
         <p>Returns the <seealso marker="#out_degree">out-degree</seealso> of
@@ -513,7 +517,7 @@
     </func>
 
     <func>
-      <name name="out_edges" arity="2"/>
+      <name name="out_edges" arity="2" since=""/>
       <fsummary>Return all edges emanating from a vertex of a digraph.
       </fsummary>
       <desc>
@@ -525,7 +529,7 @@
     </func>
 
     <func>
-      <name name="out_neighbours" arity="2"/>
+      <name name="out_neighbours" arity="2" since=""/>
       <fsummary>Return all out-neighbors of a vertex of a digraph.</fsummary>
       <desc>
         <p>Returns a list of 
@@ -536,7 +540,7 @@
     </func>
 
     <func>
-      <name name="vertex" arity="2"/>
+      <name name="vertex" arity="2" since=""/>
       <fsummary>Return the label of a vertex of a digraph.</fsummary>
       <desc>
         <p>Returns <c>{<anno>V</anno>,&nbsp;<anno>Label</anno>}</c>,
@@ -549,7 +553,7 @@
     </func>
 
     <func>
-      <name name="vertices" arity="1"/>
+      <name name="vertices" arity="1" since=""/>
       <fsummary>Return all vertices of a digraph.</fsummary>
       <desc>
         <p>Returns a list of all vertices of digraph <c><anno>G</anno></c>, in

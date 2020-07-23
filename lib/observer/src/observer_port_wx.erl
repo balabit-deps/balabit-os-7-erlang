@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2011-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2011-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -96,11 +96,12 @@ init([Notebook, Parent, Config]) ->
 			   wxListCtrl:setColumnWidth(Grid, Col, DefSize),
 			   Col + 1
 		   end,
-    ListItems = [{"Id", ?wxLIST_FORMAT_LEFT,  150},
-		 {"Connected", ?wxLIST_FORMAT_LEFT, 150},
-		 {"Name", ?wxLIST_FORMAT_LEFT, 150},
-		 {"Controls", ?wxLIST_FORMAT_LEFT, 200},
-		 {"Slot", ?wxLIST_FORMAT_RIGHT, 50}],
+    Scale = observer_wx:get_scale(),
+    ListItems = [{"Id", ?wxLIST_FORMAT_LEFT,  Scale*150},
+		 {"Connected", ?wxLIST_FORMAT_LEFT, Scale*150},
+		 {"Name", ?wxLIST_FORMAT_LEFT, Scale*150},
+		 {"Controls", ?wxLIST_FORMAT_LEFT, Scale*200},
+		 {"Slot", ?wxLIST_FORMAT_RIGHT, Scale*50}],
     lists:foldl(AddListEntry, 0, ListItems),
     wxListItem:destroy(Li),
 
@@ -241,6 +242,10 @@ handle_event(#wx{id=?ID_REFRESH_INTERVAL},
 	     State = #state{grid=Grid, timer=Timer0}) ->
     Timer = observer_lib:interval_dialog(Grid, Timer0, 10, 5*60),
     {noreply, State#state{timer=Timer}};
+
+handle_event(#wx{obj=MoreEntry,event=#wxMouse{type=left_down},userData={more,More}}, State) ->
+    observer_lib:add_scroll_entries(MoreEntry,More),
+    {noreply, State};
 
 handle_event(#wx{event=#wxMouse{type=left_down}, userData=TargetPid}, State) ->
     observer ! {open_link, TargetPid},
@@ -457,10 +462,11 @@ display_port_info(Parent, PortRec, Opened) ->
 do_display_port_info(Parent0, PortRec) ->
     Parent = observer_lib:get_wx_parent(Parent0),
     Title = "Port Info: " ++ PortRec#port.id_str,
+    Scale = observer_wx:get_scale(),
     Frame = wxMiniFrame:new(Parent, ?wxID_ANY, Title,
 			    [{style, ?wxSYSTEM_MENU bor ?wxCAPTION
 				  bor ?wxCLOSE_BOX bor ?wxRESIZE_BORDER},
-                             {size,{600,400}}]),
+                             {size,{Scale * 600, Scale * 400}}]),
     ScrolledWin = wxScrolledWindow:new(Frame,[{style,?wxHSCROLL bor ?wxVSCROLL}]),
     wxScrolledWindow:enableScrolling(ScrolledWin,true,true),
     wxScrolledWindow:setScrollbars(ScrolledWin,20,20,0,0),

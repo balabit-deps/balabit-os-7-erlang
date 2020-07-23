@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 1997-2017. All Rights Reserved.
+# Copyright Ericsson AB 1997-2018. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ APPLICATION=compiler
 # Release directory specification
 # ----------------------------------------------------
 RELSYSDIR = $(RELEASE_PATH)/lib/$(APPLICATION)-$(VSN)
+COMPILER_DIR = $(ERL_TOP)/lib/compiler/src
 
 # ----------------------------------------------------
 # Target Specs
@@ -38,7 +39,7 @@ RELSYSDIR = $(RELEASE_PATH)/lib/$(APPLICATION)-$(VSN)
 XML_APPLICATION_FILES = ref_man.xml
 XML_REF3_FILES = compile.xml
 
-XML_PART_FILES =
+XML_PART_FILES = internal.xml
 XML_CHAPTER_FILES = notes.xml
 
 BOOK_FILES = book.xml
@@ -48,6 +49,9 @@ GIF_FILES =
 XML_FILES = \
 	$(BOOK_FILES) $(XML_CHAPTER_FILES) \
 	$(XML_PART_FILES) $(XML_REF3_FILES) $(XML_APPLICATION_FILES)
+
+XML_INTERNAL_FILES = \
+	cerl.xml cerl_trees.xml cerl_clauses.xml
 
 # ----------------------------------------------------
 
@@ -61,6 +65,8 @@ MAN3_FILES = $(XML_REF3_FILES:%.xml=$(MAN3DIR)/%.3)
 HTML_REF_MAN_FILE = $(HTMLDIR)/index.html
 
 TOP_PDF_FILE =  $(PDFDIR)/$(APPLICATION)-$(VSN).pdf
+
+XML_GEN_FILES = $(XML_INTERNAL_FILES:%=$(XMLDIR)/%)
 
 # ----------------------------------------------------
 # FLAGS
@@ -85,10 +91,14 @@ man: $(MAN3_FILES)
 
 gifs: $(GIF_FILES:%=$(HTMLDIR)/%)
 
+$(XML_INTERNAL_FILES:%=$(XMLDIR)/%): $(COMPILER_DIR)/$(@:$(XMLDIR)/%.xml=%.erl)
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(COMPILER_VSN) -dir $(XMLDIR) $(COMPILER_DIR)/$(@:$(XMLDIR)/%.xml=%.erl)
+
 debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
 	rm -f errs core *~

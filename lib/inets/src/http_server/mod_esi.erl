@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@
 -include("httpd_internal.hrl").
 
 -define(VMODULE,"ESI").
--define(DEFAULT_ERL_TIMEOUT,15000).
+-define(DEFAULT_ERL_TIMEOUT,15).
 
 
 %%%=========================================================================
@@ -119,7 +119,7 @@ load("EvalScriptAlias " ++ EvalScriptAlias, []) ->
 load("ErlScriptTimeout " ++ Timeout, [])->
     case catch list_to_integer(string:strip(Timeout)) of
 	TimeoutSec when is_integer(TimeoutSec)  ->
-	   {ok, [], {erl_script_timeout, TimeoutSec * 1000}};
+	   {ok, [], {erl_script_timeout, TimeoutSec}};
 	_ ->
 	   {error, ?NICE(string:strip(Timeout) ++
 			 " is an invalid ErlScriptTimeout")}
@@ -174,7 +174,7 @@ store({erl_script_alias, Value}, _) ->
     {error, {wrong_type, {erl_script_alias, Value}}};
 store({erl_script_timeout, TimeoutSec}, _) 
   when is_integer(TimeoutSec) andalso (TimeoutSec >= 0) ->
-    {ok, {erl_script_timeout, TimeoutSec * 1000}};
+    {ok, {erl_script_timeout, TimeoutSec}};
 store({erl_script_timeout, Value}, _) ->
     {error, {wrong_type, {erl_script_timeout, Value}}};
 store({erl_script_nocache, Value} = Conf, _) 
@@ -394,7 +394,16 @@ deliver_webpage_chunk(#mod{config_db = Db} = ModData, Pid, Timeout) ->
             Continue;
 	{Headers, Body} ->
             {ok, NewHeaders, StatusCode} = httpd_esi:handle_headers(Headers),
-                IsDisableChunkedSend = httpd_response:is_disable_chunked_send(Db),
+            %% All 1xx (informational), 204 (no content), and 304 (not modified)
+            %% responses MUST NOT include a message-body, and thus are always
+            %% terminated by the first empty line after the header fields.
+            %% This implies that chunked encoding MUST NOT be used for these
+            %% status codes.
+            IsDisableChunkedSend =
+                httpd_response:is_disable_chunked_send(Db) orelse
+                StatusCode =:= 204 orelse                      %% No Content
+                StatusCode =:= 304 orelse                      %% Not Modified
+                (100 =< StatusCode andalso StatusCode =< 199), %% Informational
             case (ModData#mod.http_version =/= "HTTP/1.1") or
                 (IsDisableChunkedSend) of
                 true ->
@@ -405,8 +414,8 @@ deliver_webpage_chunk(#mod{config_db = Db} = ModData, Pid, Timeout) ->
                     send_headers(ModData, StatusCode, 
                                  [{"transfer-encoding", 
                                    "chunked"} | NewHeaders])
-            end,    
-            handle_body(Pid, ModData, Body, Timeout, length(Body), 
+            end,
+            handle_body(Pid, ModData, Body, Timeout, length(Body),
                         IsDisableChunkedSend);
         timeout ->
             send_headers(ModData, 504, [{"connection", "close"}]),
@@ -491,7 +500,7 @@ kill_esi_delivery_process(Pid) ->
 	
 
 erl_script_timeout(Db) ->
-    httpd_util:lookup(Db, erl_script_timeout, ?DEFAULT_ERL_TIMEOUT).
+    httpd_util:lookup(Db, erl_script_timeout, ?DEFAULT_ERL_TIMEOUT) * 1000.
 
 script_elements(FuncAndInput, Input) ->
     case input_type(FuncAndInput) of
@@ -561,7 +570,7 @@ eval(#mod{method = Method} = ModData, ESIBody, Modules)
     end.
 
 generate_webpage(ESIBody) ->
-    (catch lib:eval_str(string:concat(ESIBody,". "))).
+    (catch erl_eval:eval_str(string:concat(ESIBody,". "))).
 
 is_authorized(_ESIBody, [all]) ->
     true;

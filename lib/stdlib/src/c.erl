@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -564,7 +564,7 @@ display_info(Pid) ->
 			   Other
 		   end,
 	    Reds = fetch(reductions, Info),
-	    LM = length(fetch(messages, Info)),
+	    LM = fetch(message_queue_len, Info),
 	    HS = fetch(heap_size, Info),
 	    SS = fetch(stack_size, Info),
 	    iformat(w(Pid), mfa_string(Call),
@@ -668,19 +668,23 @@ lm() ->
     [l(M) || M <- mm()].
 
 %% erlangrc(Home)
-%%  Try to run a ".erlang" file, first in the current directory
-%%  else in home directory.
+%%  Try to run a ".erlang" file in home directory.
+
+-spec erlangrc() -> {ok, file:filename()} | {error, term()}.
 
 erlangrc() ->
     case init:get_argument(home) of
 	{ok,[[Home]]} ->
 	    erlangrc([Home]);
 	_ ->
-	    f_p_e(["."], ".erlang")
+            {error, enoent}
     end.
 
-erlangrc([Home]) ->
-    f_p_e([".",Home], ".erlang").
+-spec erlangrc(PathList) -> {ok, file:filename()} | {error, term()}
+                                when PathList :: [Dir :: file:name()].
+
+erlangrc([Home|_]=Paths) when is_list(Home) ->
+    f_p_e(Paths, ".erlang").
 
 error(Fmt, Args) ->
     error_logger:error_msg(Fmt, Args).
@@ -692,11 +696,11 @@ f_p_e(P, F) ->
 	{error, E={Line, _Mod, _Term}} ->
 	    error("file:path_eval(~tp,~tp): error on line ~p: ~ts~n",
 		  [P, F, Line, file:format_error(E)]),
-	    ok;
+	    {error, E};
 	{error, E} ->
 	    error("file:path_eval(~tp,~tp): ~ts~n",
 		  [P, F, file:format_error(E)]),
-	    ok;
+	    {error, E};
 	Other ->
 	    Other
     end.
@@ -882,7 +886,7 @@ portinfo(Id) ->
 procline(Name, Info, Pid) ->
     Call = initial_call(Info),
     Reds  = fetch(reductions, Info),
-    LM = length(fetch(messages, Info)),
+    LM = fetch(message_queue_len, Info),
     procformat(io_lib:format("~tw",[Name]),
 	       io_lib:format("~w",[Pid]),
 	       io_lib:format("~ts",[mfa_string(Call)]),
@@ -1030,8 +1034,8 @@ appcall(App, M, F, Args) ->
     try
 	apply(M, F, Args)
     catch
-	error:undef ->
-	    case erlang:get_stacktrace() of
+	error:undef:S ->
+	    case S of
 		[{M,F,Args,_}|_] ->
 		    Arity = length(Args),
 		    io:format("Call to ~w:~w/~w in application ~w failed.\n",

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2006-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2006-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -18,10 +18,6 @@
 %% %CopyrightEnd%
 %%
 
-%%% @doc Common Test Framework functions handling test specifications.
-%%%
-%%% <p>This module exports functions that are used within CT to
-%%% scan and parse test specifikations.</p>
 -module(ct_testspec).
 
 -export([prepare_tests/1, prepare_tests/2, 
@@ -1425,7 +1421,12 @@ skip_groups1(Suite,Groups,Cmt,Suites0) ->
 	    GrAndCases1 = GrAndCases0 ++ SkipGroups,
 	    insert_in_order({Suite,GrAndCases1},Suites0,replace);
 	false ->
-	    insert_in_order({Suite,SkipGroups},Suites0,replace)
+	    case Suites0 of
+		[{all,_}=All|Skips]->
+		    [All|Skips++[{Suite,SkipGroups}]];
+                _ ->
+                    insert_in_order({Suite,SkipGroups},Suites0,replace)
+            end
     end.
 
 skip_cases(Node,Dir,Suite,Cases,Cmt,Tests,false) when is_list(Cases) ->

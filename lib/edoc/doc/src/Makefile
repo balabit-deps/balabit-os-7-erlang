@@ -54,9 +54,10 @@ XML_NOTES_FILES = notes.xml
 BOOK_FILES = book.xml
 
 XML_FILES=\
-	$(BOOK_FILES) $(XML_CHAPTER_FILES) \
-	$(XML_PART_FILES) $(XML_REF3_FILES) $(XML_APPLICATION_FILES) \
-	$(XML_NOTES_FILES)
+	$(BOOK_FILES) $(XML_APPLICATION_FILES) \
+	$(XML_PART_FILES) $(XML_NOTES_FILES)
+
+XML_GEN_FILES=$(XML_REF3_FILES:%=$(XMLDIR)/%) $(XML_CHAPTER_FILES:%=$(XMLDIR)/%)
 
 # ----------------------------------------------------
 INFO_FILE = ../../info
@@ -78,6 +79,11 @@ HTML_REF_MAN_FILE = $(HTMLDIR)/index.html
 
 TOP_PDF_FILE = $(PDFDIR)/$(APPLICATION)-$(VSN).pdf
 
+INCLUDES_DIR = ../../include
+INCLUDES = $(INCLUDES_DIR)/edoc_doclet.hrl
+
+DTDS_DIR = ../../priv
+DTDS = $(DTDS_DIR)/edoc.dtd
 
 # ----------------------------------------------------
 # FLAGS
@@ -101,11 +107,11 @@ html: gifs $(HTML_REF_MAN_FILE)
 
 man: $(MAN3_FILES)
 
-$(XML_REF3_FILES):
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EDOC_VSN) -i $(ERL_TOP)/lib/edoc/include $(SRC_DIR)/$(@:%.xml=%.erl)
+$(XML_REF3_FILES:%=$(XMLDIR)/%):
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EDOC_VSN) -i $(ERL_TOP)/lib/edoc/include -dir $(XMLDIR) $(SRC_DIR)/$(@:$(XMLDIR)/%.xml=%.erl)
 
-$(XML_CHAPTER_FILES): ../overview.edoc
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EDOC_VSN) -chapter ../overview.edoc
+$(XML_CHAPTER_FILES:%=$(XMLDIR)/%): ../overview.edoc
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -def vsn $(EDOC_VSN) -chapter -dir $(XMLDIR) $<
 
 gifs: $(GIF_FILES:%=$(HTMLDIR)/%)
 
@@ -113,6 +119,7 @@ debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(XML_REF3_FILES) $(XML_CHAPTER_FILES) *.html
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
@@ -133,5 +140,6 @@ release_docs_spec: docs
 	$(INSTALL_DATA) $(INFO_FILE) "$(RELSYSDIR)"
 	$(INSTALL_DIR) "$(RELEASE_PATH)/man/man3"
 	$(INSTALL_DATA) $(MAN3DIR)/* "$(RELEASE_PATH)/man/man3"
+	$(INSTALL_DATA) $(INCLUDES) $(DTDS) "$(RELSYSDIR)/doc/html"
 
 release_spec:

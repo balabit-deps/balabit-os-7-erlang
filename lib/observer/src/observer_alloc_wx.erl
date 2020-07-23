@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2015-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2015-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -79,8 +79,8 @@ init([Notebook, Parent, Config]) ->
                       max   = #{}
 		     }
 	}
-    catch _:Err ->
-	    io:format("~p crashed ~tp: ~tp~n",[?MODULE, Err, erlang:get_stacktrace()]),
+    catch _:Err:Stacktrace ->
+	    io:format("~p crashed ~tp: ~tp~n",[?MODULE, Err, Stacktrace]),
 	    {stop, Err}
     end.
 
@@ -282,11 +282,12 @@ create_mem_info(Parent) ->
     Grid = wxListCtrl:new(Parent, [{style, Style}]),
 
     Li = wxListItem:new(),
+    Scale = observer_wx:get_scale(),
     AddListEntry = fun({Name, Align, DefSize}, Col) ->
 			   wxListItem:setText(Li, Name),
 			   wxListItem:setAlign(Li, Align),
 			   wxListCtrl:insertColumn(Grid, Col, Li),
-			   wxListCtrl:setColumnWidth(Grid, Col, DefSize),
+			   wxListCtrl:setColumnWidth(Grid, Col, DefSize*Scale),
 			   Col + 1
 		   end,
     ListItems = [{"Allocator Type",  ?wxLIST_FORMAT_LEFT,  200},

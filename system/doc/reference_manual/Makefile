@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 # 
-# Copyright Ericsson AB 2003-2016. All Rights Reserved.
+# Copyright Ericsson AB 2003-2018. All Rights Reserved.
 # 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ include $(ERL_TOP)/erts/vsn.mk
 #VSN=$(SYSTEM_VSN)
 
 APPLICATION=otp-system-documentation
+XMLDIR := $(XMLDIR)/reference_manual
 # ----------------------------------------------------
 # Release directory specification
 # ----------------------------------------------------
@@ -83,7 +84,6 @@ DVIPS_FLAGS +=
 # ----------------------------------------------------
 # Targets
 # ----------------------------------------------------
-_create_dirs := $(shell mkdir -p $(HTMLDIR))
 
 docs: html
 
@@ -94,7 +94,8 @@ html: $(GIF_FILES) $(HTML_UG_FILE)
 debug opt: 
 
 clean clean_docs:
-	rm -rf $(HTMLDIR)
+	rm -f $(XMLDIR)/*.xml
+	rm -f $(HTMLDIR)/*.gif $(HTMLDIR)/*.html
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
 	rm -f errs core *~ 
 

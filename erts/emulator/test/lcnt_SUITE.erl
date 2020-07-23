@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2017. All Rights Reserved.
+%% Copyright Ericsson AB 2017-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -87,8 +87,9 @@ wait_for_empty_lock_list() ->
     wait_for_empty_lock_list(10).
 wait_for_empty_lock_list(Tries) when Tries > 0 ->
     try_flush_cleanup_ops(),
-    case erts_debug:lcnt_collect() of
-        [{duration, _}, {locks, []}] ->
+    [{duration, _}, {locks, Locks}] = erts_debug:lcnt_collect(),
+    case remove_untoggleable_locks(Locks) of
+        [] ->
             ok;
         _ ->
             timer:sleep(50),
@@ -124,7 +125,7 @@ toggle_lock_counting(Config) when is_list(Config) ->
 get_lock_info_for(Categories) when is_list(Categories) ->
     ok = erts_debug:lcnt_control(mask, Categories),
     [{duration, _}, {locks, Locks}] = erts_debug:lcnt_collect(),
-    Locks;
+    remove_untoggleable_locks(Locks);
 
 get_lock_info_for(Category) when is_atom(Category) ->
     get_lock_info_for([Category]).
@@ -178,3 +179,16 @@ registered_db_tables(Config) when is_list(Config) ->
             (_Lock) -> false
         end, DbLocks),
     ok.
+
+%% Not all locks can be toggled on or off due to technical limitations, so we
+%% need to filter them out when checking whether we successfully disabled lock
+%% counting.
+remove_untoggleable_locks([]) ->
+    [];
+remove_untoggleable_locks([{resource_monitors, _, _, _} | T]) ->
+    remove_untoggleable_locks(T);
+remove_untoggleable_locks([{'socket[gcnt]', _, _, _} | T]) ->
+    %% Global lock used by socket NIF
+    remove_untoggleable_locks(T);
+remove_untoggleable_locks([H | T]) ->
+    [H | remove_untoggleable_locks(T)].

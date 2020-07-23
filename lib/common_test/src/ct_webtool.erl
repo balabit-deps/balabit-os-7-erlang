@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2001-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2001-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -771,7 +771,7 @@ fill_out(Nr)->
 %Controls whether the user selected a tool to start
 %----------------------------------------------------------------------
 get_tools(Input)->
-    case httpd:parse_query(Input) of
+    case uri_string:dissect_query(Input) of
 	[]->
 	    no_tools;
 	 Tools->

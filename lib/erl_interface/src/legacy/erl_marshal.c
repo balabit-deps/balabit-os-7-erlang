@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 1996-2017. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -107,7 +107,7 @@ static int init_cmp_num_class_p=1; /* initialize array, the first time */
 void erl_init_marshal(void)
 {
   if (init_cmp_array_p) {
-    memset(cmp_array, 0, CMP_ARRAY_SIZE);
+    memset(cmp_array, 0, sizeof cmp_array);
     cmp_array[ERL_SMALL_INTEGER_EXT] = ERL_NUM_CMP;
     cmp_array[ERL_INTEGER_EXT]       = ERL_NUM_CMP;
     cmp_array[ERL_FLOAT_EXT]         = ERL_NUM_CMP;
@@ -1803,7 +1803,7 @@ static int cmp_exe2(unsigned char **e1, unsigned char **e2)
       k = 0;
       while (1) {
 	  if (k++ == min){
-	      if (i == j) return 0;
+	      if (i == j) return compare_top_ext(e1 , e2);
 	      if (i < j) return -1;
 	      return 1;
 	  }

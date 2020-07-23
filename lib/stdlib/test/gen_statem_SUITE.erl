@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2016-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2016-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -behaviour(gen_statem).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -60,7 +60,8 @@ tcs(start) ->
 tcs(stop) ->
     [stop1, stop2, stop3, stop4, stop5, stop6, stop7, stop8, stop9, stop10];
 tcs(abnormal) ->
-    [abnormal1, abnormal1clean, abnormal1dirty, abnormal2];
+    [abnormal1, abnormal1clean, abnormal1dirty,
+     abnormal2, abnormal3, abnormal4];
 tcs(sys) ->
     [sys1, call_format_status,
      error_format_status, terminate_crash_format,
@@ -120,7 +121,8 @@ end_per_testcase(_CaseName, Config) ->
 start1(Config) ->
     %%OldFl = process_flag(trap_exit, true),
 
-    {ok,Pid0} = gen_statem:start_link(?MODULE, start_arg(Config, []), []),
+    {ok,Pid0} =
+	gen_statem:start_link(?MODULE, start_arg(Config, []), [{debug,[trace]}]),
     ok = do_func_test(Pid0),
     ok = do_sync_func_test(Pid0),
     stop_it(Pid0),
@@ -134,7 +136,8 @@ start1(Config) ->
 %% anonymous w. shutdown
 start2(Config) ->
     %% Dont link when shutdown
-    {ok,Pid0} = gen_statem:start(?MODULE, start_arg(Config, []), []),
+    {ok,Pid0} =
+	gen_statem:start(?MODULE, start_arg(Config, []), []),
     ok = do_func_test(Pid0),
     ok = do_sync_func_test(Pid0),
     stopped = gen_statem:call(Pid0, {stop,shutdown}),
@@ -510,13 +513,56 @@ abnormal1dirty(Config) ->
 %% trap exit since we must link to get the real bad_return_ error
 abnormal2(Config) ->
     OldFl = process_flag(trap_exit, true),
-    {ok,Pid} = gen_statem:start_link(?MODULE, start_arg(Config, []), []),
+    {ok,Pid} =
+        gen_statem:start_link(
+          ?MODULE, start_arg(Config, []), [{debug,[log]}]),
 
     %% bad return value in the gen_statem loop
     {{{bad_return_from_state_function,badreturn},_},_} =
 	?EXPECT_FAILURE(gen_statem:call(Pid, badreturn), Reason),
     receive
 	{'EXIT',Pid,{{bad_return_from_state_function,badreturn},_}} -> ok
+    after 5000 ->
+	    ct:fail(gen_statem_did_not_die)
+    end,
+
+    process_flag(trap_exit, OldFl),
+    ok = verify_empty_msgq().
+
+%% Check that bad return actions makes the stm crash. Note that we must
+%% trap exit since we must link to get the real bad_return_ error
+abnormal3(Config) ->
+    OldFl = process_flag(trap_exit, true),
+    {ok,Pid} =
+        gen_statem:start_link(
+          ?MODULE, start_arg(Config, []), [{debug,[log]}]),
+
+    %% bad return value in the gen_statem loop
+    {{{bad_action_from_state_function,badaction},_},_} =
+	?EXPECT_FAILURE(gen_statem:call(Pid, badaction), Reason),
+    receive
+	{'EXIT',Pid,{{bad_action_from_state_function,badaction},_}} -> ok
+    after 5000 ->
+	    ct:fail(gen_statem_did_not_die)
+    end,
+
+    process_flag(trap_exit, OldFl),
+    ok = verify_empty_msgq().
+
+%% Check that bad timeout actions makes the stm crash. Note that we must
+%% trap exit since we must link to get the real bad_return_ error
+abnormal4(Config) ->
+    OldFl = process_flag(trap_exit, true),
+    {ok,Pid} =
+        gen_statem:start_link(
+          ?MODULE, start_arg(Config, []), [{debug,[log]}]),
+
+    %% bad return value in the gen_statem loop
+    BadTimeout = {badtimeout,4711,ouch},
+    {{{bad_action_from_state_function,BadTimeout},_},_} =
+	?EXPECT_FAILURE(gen_statem:call(Pid, BadTimeout), Reason),
+    receive
+	{'EXIT',Pid,{{bad_action_from_state_function,BadTimeout},_}} -> ok
     after 5000 ->
 	    ct:fail(gen_statem_did_not_die)
     end,
@@ -603,51 +649,80 @@ state_enter(_Config) ->
 	      end,
 	  start =>
 	      fun (enter, Prev, N) ->
-		      Self ! {enter,start,Prev,N},
+		      Self ! {N,enter,start,Prev},
 		      {keep_state,N + 1};
 		  (internal, Prev, N) ->
-		      Self ! {internal,start,Prev,N},
+		      Self ! {N,internal,start,Prev},
 		      {keep_state,N + 1};
+                  (timeout, M, N) ->
+                      {keep_state, N + 1,
+                       {reply, {Self,N}, {timeout,M}}};
 		  ({call,From}, repeat, N) ->
 		      {repeat_state,N + 1,
-		       [{reply,From,{repeat,start,N}}]};
+		       [{reply,From,{N,repeat,start}}]};
 		  ({call,From}, echo, N) ->
 		      {next_state,wait,N + 1,
-		       {reply,From,{echo,start,N}}};
+		       [{reply,From,{N,echo,start}},{timeout,0,N}]};
 		  ({call,From}, {stop,Reason}, N) ->
 		      {stop_and_reply,Reason,
-		       [{reply,From,{stop,N}}],N + 1}
+		       [{reply,From,{N,stop}}],N + 1}
 	      end,
 	  wait =>
 	      fun (enter, Prev, N) when N < 5 ->
 		      {repeat_state,N + 1,
-		       {reply,{Self,N},{enter,Prev}}};
+		       [{reply,{Self,N},{enter,Prev}},
+                        {timeout,0,N},
+                        {state_timeout,0,N}]};
 		  (enter, Prev, N) ->
-		      Self ! {enter,wait,Prev,N},
-		      {keep_state,N + 1};
+		      Self ! {N,enter,wait,Prev},
+		      {keep_state,N + 1,
+                       [{timeout,0,N},
+                        {state_timeout,0,N}]};
+                  (timeout, M, N) ->
+                      {keep_state, N + 1,
+                       {reply, {Self,N}, {timeout,M}}};
+                  (state_timeout, M, N) ->
+                      {keep_state, N + 1,
+                       {reply, {Self,N}, {state_timeout,M}}};
 		  ({call,From}, repeat, N) ->
 		      {repeat_state_and_data,
-		       [{reply,From,{repeat,wait,N}}]};
+		       [{reply,From,{N,repeat,wait}},
+                        {timeout,0,N}]};
 		  ({call,From}, echo, N) ->
 		      {next_state,start,N + 1,
 		       [{next_event,internal,wait},
-			{reply,From,{echo,wait,N}}]}
+			{reply,From,{N,echo,wait}}]}
 	      end},
     {ok,STM} =
 	gen_statem:start_link(
-	  ?MODULE, {map_statem,Machine,[state_enter]}, []),
+	  ?MODULE, {map_statem,Machine,[state_enter]},
+          [{debug,[trace,{log,17}]}]),
+    ok = sys:log(STM, false),
+    ok = sys:log(STM, true),
 
-    [{enter,start,start,1}] = flush(),
-    {echo,start,2} = gen_statem:call(STM, echo),
-    [{3,{enter,start}},{4,{enter,start}},{enter,wait,start,5}] = flush(),
-    {wait,[6|_]} = sys:get_state(STM),
-    {repeat,wait,6} = gen_statem:call(STM, repeat),
-    [{enter,wait,wait,6}] = flush(),
-    {echo,wait,7} = gen_statem:call(STM, echo),
-    [{enter,start,wait,8},{internal,start,wait,9}] = flush(),
-    {repeat,start,10} = gen_statem:call(STM, repeat),
-    [{enter,start,start,11}] = flush(),
-    {stop,12} = gen_statem:call(STM, {stop,bye}),
+    [{1,enter,start,start}] = flush(),
+    {2,echo,start} = gen_statem:call(STM, echo),
+    [{3,{enter,start}},
+     {4,{enter,start}},
+     {5,enter,wait,start},
+     {6,{timeout,5}},
+     {7,{state_timeout,5}}] = flush(),
+    {wait,[8|_]} = sys:get_state(STM),
+    {8,repeat,wait} = gen_statem:call(STM, repeat),
+    [{8,enter,wait,wait},
+     {9,{timeout,8}},
+     {10,{state_timeout,8}}] = flush(),
+    {11,echo,wait} = gen_statem:call(STM, echo),
+    [{12,enter,start,wait},
+     {13,internal,start,wait}] = flush(),
+    {14,repeat,start} = gen_statem:call(STM, repeat),
+    [{15,enter,start,start}] = flush(),
+
+    {ok,Log} = sys:log(STM, get),
+    io:format("sys:log ~p~n", [Log]),
+    ok = sys:log(STM, print),
+
+    {16,stop} = gen_statem:call(STM, {stop,bye}),
     [{'EXIT',STM,bye}] = flush(),
 
     {noproc,_} =
@@ -832,9 +907,14 @@ event_types(_Config) ->
 	%% Abusing the internal format of From...
 	#{init =>
 	      fun () ->
-		      {ok, start, undefined}
+		      {ok, start1, undefined,
+		       [{next_event,internal,0}]}
 	      end,
-	  start =>
+	  start1 =>
+	      fun (internal, 0, undefined) ->
+		      {next_state, start2, undefined}
+	      end,
+	  start2 =>
 	      fun ({call,_} = Call, Req, undefined) ->
 		      {next_state, state1, undefined,
 		       [{next_event,internal,1},
@@ -1404,7 +1484,8 @@ enter_loop(_Config) ->
 
     %% Locally registered process + {local,Name}
     {ok,Pid1a} =
-	proc_lib:start_link(?MODULE, enter_loop, [local,local]),
+	proc_lib:start_link(
+          ?MODULE, enter_loop, [local,local,[{debug,[{log,7}]}]]),
     yes = gen_statem:call(Pid1a, 'alive?'),
     stopped = gen_statem:call(Pid1a, stop),
     receive
@@ -1416,7 +1497,8 @@ enter_loop(_Config) ->
 
     %% Unregistered process + {local,Name}
     {ok,Pid1b} =
-	proc_lib:start_link(?MODULE, enter_loop, [anon,local]),
+	proc_lib:start_link(
+          ?MODULE, enter_loop, [anon,local,[{debug,[log]}]]),
     receive
 	{'EXIT',Pid1b,process_not_registered} ->
 	    ok
@@ -1525,6 +1607,9 @@ enter_loop(_Config) ->
     ok = verify_empty_msgq().
 
 enter_loop(Reg1, Reg2) ->
+    enter_loop(Reg1, Reg2, []).
+%%
+enter_loop(Reg1, Reg2, Opts) ->
     process_flag(trap_exit, true),
     case Reg1 of
 	local -> register(armitage, self());
@@ -1536,15 +1621,15 @@ enter_loop(Reg1, Reg2) ->
     case Reg2 of
 	local ->
 	    gen_statem:enter_loop(
-	      ?MODULE, [], state0, [], {local,armitage});
+	      ?MODULE, Opts, state0, [], {local,armitage});
 	global ->
 	    gen_statem:enter_loop(
-	      ?MODULE, [], state0, [], {global,armitage});
+	      ?MODULE, Opts, state0, [], {global,armitage});
 	via ->
 	    gen_statem:enter_loop(
-	      ?MODULE, [], state0, [], {via, dummy_via, armitage});
+	      ?MODULE, Opts, state0, [], {via, dummy_via, armitage});
 	anon ->
-	    gen_statem:enter_loop(?MODULE, [], state0, [])
+	    gen_statem:enter_loop(?MODULE, Opts, state0, [])
     end.
 
 undef_code_change(_Config) ->
@@ -1576,7 +1661,9 @@ undef_terminate2(_Config) ->
 
 undef_in_terminate(_Config) ->
     Data =  {undef_in_terminate, {?MODULE, terminate}},
-    {ok, Statem} = gen_statem:start(?MODULE, {data, Data}, []),
+    {ok, Statem} =
+        gen_statem:start(
+          ?MODULE, {data, Data}, [{debug,[log]}]),
     try
         gen_statem:stop(Statem),
         ct:fail(should_crash)
@@ -1801,10 +1888,12 @@ idle(cast, {connect,Pid}, Data) ->
 idle({call,From}, connect, Data) ->
     gen_statem:reply(From, accept),
     {next_state,wfor_conf,Data,infinity}; % NoOp timeout just to test API
-idle(cast, badreturn, _Data) ->
-    badreturn;
 idle({call,_From}, badreturn, _Data) ->
     badreturn;
+idle({call,_From}, badaction, Data) ->
+    {keep_state, Data, [badaction]};
+idle({call,_From}, {badtimeout,_,_} = BadTimeout, Data) ->
+    {keep_state, Data, BadTimeout};
 idle({call,From}, {delayed_answer,T}, Data) ->
     receive
     after T ->
@@ -2040,9 +2129,9 @@ handle_event(Type, Event, State, Data) ->
 	Result ->
 	    wrap_result(Result)
     catch
-	throw:Result ->
+	throw:Result:Stacktrace ->
 	    erlang:raise(
-	      throw, wrap_result(Result), erlang:get_stacktrace())
+	      throw, wrap_result(Result), Stacktrace)
     end.
 
 unwrap_state([State]) ->

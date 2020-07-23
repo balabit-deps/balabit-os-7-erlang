@@ -415,11 +415,13 @@ trans_fun([{wait_timeout,{_,Lbl},Reg}|Instructions], Env) ->
   SuspTmout = hipe_icode:mk_if(suspend_msg_timeout,[],
 			       map_label(Lbl),hipe_icode:label_name(DoneLbl)),
   Movs ++ [SetTmout, SuspTmout, DoneLbl | trans_fun(Instructions,Env1)];
-%%--- recv_mark/1 & recv_set/1 ---  XXX: Handle better??
+%%--- recv_mark/1 & recv_set/1 ---
 trans_fun([{recv_mark,{f,_}}|Instructions], Env) ->
-  trans_fun(Instructions,Env);
+  Mark = hipe_icode:mk_primop([],recv_mark,[]),
+  [Mark | trans_fun(Instructions,Env)];
 trans_fun([{recv_set,{f,_}}|Instructions], Env) ->
-  trans_fun(Instructions,Env);
+  Set = hipe_icode:mk_primop([],recv_set,[]),
+  [Set | trans_fun(Instructions,Env)];
 %%--------------------------------------------------------------------
 %%--- Translation of arithmetics {bif,ArithOp, ...} ---
 %%--------------------------------------------------------------------
@@ -555,32 +557,21 @@ trans_fun([{move,Src,Dst}|Instructions], Env) ->
   Dst1 = mk_var(Dst),
   Src1 = trans_arg(Src),
   [hipe_icode:mk_move(Dst1,Src1) | trans_fun(Instructions,Env)];
-%%--- catch --- ITS PROCESSING IS POSTPONED
-trans_fun([{'catch',N,{_,EndLabel}}|Instructions], Env) ->
-  NewContLbl = mk_label(new),
-  [{'catch',N,EndLabel},NewContLbl | trans_fun(Instructions,Env)];
-%%--- catch_end --- ITS PROCESSING IS POSTPONED
-trans_fun([{catch_end,_N}=I|Instructions], Env) ->
-  [I | trans_fun(Instructions,Env)];
-%%--- try --- ITS PROCESSING IS POSTPONED
-trans_fun([{'try',N,{_,EndLabel}}|Instructions], Env) ->
-  NewContLbl = mk_label(new),
-  [{'try',N,EndLabel},NewContLbl | trans_fun(Instructions,Env)];
-%%--- try_end ---
-trans_fun([{try_end,_N}|Instructions], Env) ->
-  [hipe_icode:mk_end_try() | trans_fun(Instructions,Env)];
-%%--- try_case --- ITS PROCESSING IS POSTPONED
-trans_fun([{try_case,_N}=I|Instructions], Env) ->
-  [I | trans_fun(Instructions,Env)];
-%%--- try_case_end ---
-trans_fun([{try_case_end,Arg}|Instructions], Env) ->
-  BadArg = trans_arg(Arg),
-  ErrVar = mk_var(new),
-  Vs = [mk_var(new)],
-  Atom = hipe_icode:mk_move(ErrVar,hipe_icode:mk_const(try_clause)),
-  Tuple = hipe_icode:mk_primop(Vs,mktuple,[ErrVar,BadArg]),
-  Fail = hipe_icode:mk_fail(Vs,error),
-  [Atom,Tuple,Fail | trans_fun(Instructions,Env)];
+%%
+%% try/catch -- THESE ARE KNOWN TO MISCOMPILE, SEE OTP-15949
+%%
+trans_fun([{'catch'=Name,_,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{catch_end=Name,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{'try'=Name,_,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{try_end=Name,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{try_case=Name,_}|_], _Env) ->
+  nyi(Name);
+trans_fun([{try_case_end=Name,_}|_], _Env) ->
+  nyi(Name);
 %%--- raise ---
 trans_fun([{raise,{f,0},[Reg1,Reg2],{x,0}}|Instructions], Env) ->
   V1 = trans_arg(Reg1),
@@ -603,6 +594,16 @@ trans_fun([{get_list,List,Head,Tail}|Instructions], Env) ->
       ?error_msg("hd and tl regs identical in get_list~n",[]),
       erlang:error(not_handled)
   end;
+%%--- get_hd ---
+trans_fun([{get_hd,List,Head}|Instructions], Env) ->
+  TransList = [trans_arg(List)],
+  I = hipe_icode:mk_primop([mk_var(Head)],unsafe_hd,TransList),
+  [I | trans_fun(Instructions,Env)];
+%%--- get_tl ---
+trans_fun([{get_tl,List,Tail}|Instructions], Env) ->
+  TransList = [trans_arg(List)],
+  I = hipe_icode:mk_primop([mk_var(Tail)],unsafe_tl,TransList),
+  [I | trans_fun(Instructions,Env)];
 %%--- get_tuple_element ---
 trans_fun([{get_tuple_element,Xreg,Index,Dst}|Instructions], Env) ->
   I = hipe_icode:mk_primop([mk_var(Dst)],
@@ -635,6 +636,13 @@ trans_fun([{put_tuple,_Size,Reg}|Instructions], Env) ->
   Primop = hipe_icode:mk_primop(Dest,mktuple,Src),
   Moves ++ [Primop | trans_fun(Instructions2,Env2)];
 %%--- put --- SHOULD NOT REALLY EXIST HERE; put INSTRUCTIONS ARE HANDLED ABOVE.
+%%--- put_tuple2 ---
+trans_fun([{put_tuple2,Reg,{list,Elements}}|Instructions], Env) ->
+  Dest = [mk_var(Reg)],
+  {Moves,Vars,Env2} = trans_elements(Elements, [], [], Env),
+  Src = lists:reverse(Vars),
+  Primop = hipe_icode:mk_primop(Dest, mktuple, Src),
+  Moves ++ [Primop | trans_fun(Instructions, Env2)];
 %%--- badmatch ---
 trans_fun([{badmatch,Arg}|Instructions], Env) ->
   BadVar = trans_arg(Arg),
@@ -794,7 +802,7 @@ trans_fun([{bs_append,{f,Lbl},Size,W,R,U,Binary,{field_flags,F},Dst}|
   SizeArg = trans_arg(Size),
   BinArg = trans_arg(Binary),
   IcodeDst = mk_var(Dst),
-  Offset = mk_var(reg),
+  Offset = mk_var(reg_gcsafe),
   Base = mk_var(reg),
   trans_bin_call({hipe_bs_primop,{bs_append,W,R,U,F}},Lbl,[SizeArg,BinArg],
 		[IcodeDst,Base,Offset],
@@ -805,7 +813,7 @@ trans_fun([{bs_private_append,{f,Lbl},Size,U,Binary,{field_flags,F},Dst}|
   SizeArg = trans_arg(Size),
   BinArg = trans_arg(Binary),
   IcodeDst = mk_var(Dst),
-  Offset = mk_var(reg),
+  Offset = mk_var(reg_gcsafe),
   Base = mk_var(reg),
   trans_bin_call({hipe_bs_primop,{bs_private_append,U,F}},
 		 Lbl,[SizeArg,BinArg],
@@ -844,7 +852,7 @@ trans_fun([{bs_init2,{f,Lbl},Size,_Words,_LiveRegs,{field_flags,Flags0},X}|
 	   Instructions], Env) ->
   Dst = mk_var(X),
   Flags = resolve_native_endianess(Flags0),
-  Offset = mk_var(reg),
+  Offset = mk_var(reg_gcsafe),
   Base = mk_var(reg),
   {Name, Args} =
     case Size of
@@ -860,7 +868,7 @@ trans_fun([{bs_init_bits,{f,Lbl},Size,_Words,_LiveRegs,{field_flags,Flags0},X}|
 	   Instructions], Env) ->
   Dst = mk_var(X),
   Flags = resolve_native_endianess(Flags0),
-  Offset = mk_var(reg),
+  Offset = mk_var(reg_gcsafe),
   Base = mk_var(reg),
   {Name, Args} =
     case Size of
@@ -1127,9 +1135,10 @@ trans_fun([{test,has_map_fields,{f,Lbl},Map,{list,Keys}}|Instructions], Env) ->
 		    lists:flatten([[K, {r, 0}] || K <- Keys])),
   [MapMove, TestInstructions | trans_fun(Instructions, Env2)];
 trans_fun([{get_map_elements,{f,Lbl},Map,{list,KVPs}}|Instructions], Env) ->
+  KVPs1 = overwrite_map_last(Map, KVPs),
   {MapMove, MapVar, Env1} = mk_move_and_var(Map, Env),
   {TestInstructions, GetInstructions, Env2} =
-    trans_map_query(MapVar, map_label(Lbl), Env1, KVPs),
+    trans_map_query(MapVar, map_label(Lbl), Env1, KVPs1),
   [MapMove, TestInstructions, GetInstructions | trans_fun(Instructions, Env2)];
 %%--- put_map_assoc ---
 trans_fun([{put_map_assoc,{f,Lbl},Map,Dst,_N,{list,Pairs}}|Instructions], Env) ->
@@ -1157,6 +1166,32 @@ trans_fun([{put_map_exact,{f,Lbl},Map,Dst,_N,{list,Pairs}}|Instructions], Env) -
 	  gen_put_map_instrs(new, exact, TempMapVar, Dst, new, Pairs, Env1)
       end,
   [MapMove, TempMapMove, PutInstructions | trans_fun(Instructions, Env2)];
+%%--- build_stacktrace ---
+trans_fun([build_stacktrace|Instructions], Env) ->
+  Vars = [mk_var({x,0})], %{x,0} is implict arg and dst
+  [hipe_icode:mk_primop(Vars,build_stacktrace,Vars),
+   trans_fun(Instructions, Env)];
+%%--- raw_raise ---
+trans_fun([raw_raise|Instructions], Env) ->
+  Vars = [mk_var({x,0}),mk_var({x,1}),mk_var({x,2})],
+  Dst = [mk_var({x,0})],
+  [hipe_icode:mk_primop(Dst,raw_raise,Vars) |
+   trans_fun(Instructions, Env)];
+%%--------------------------------------------------------------------
+%% New binary matching added in OTP 22.
+%%--------------------------------------------------------------------
+%%--- bs_get_tail ---
+trans_fun([{bs_get_tail=Name,_,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--- bs_start_match3 ---
+trans_fun([{bs_start_match3=Name,_,_,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--- bs_get_position ---
+trans_fun([{bs_get_position=Name,_,_,_}|_Instructions], _Env) ->
+  nyi(Name);
+%%--- bs_set_position ---
+trans_fun([{bs_set_position=Name,_,_}|_Instructions], _Env) ->
+  nyi(Name);
 %%--------------------------------------------------------------------
 %%--- ERROR HANDLING ---
 %%--------------------------------------------------------------------
@@ -1164,6 +1199,9 @@ trans_fun([X|_], _) ->
   ?EXIT({'trans_fun/2',X});
 trans_fun([], _) ->
   [].
+
+nyi(Name) ->
+  throw({unimplemented_instruction,Name}).
 
 %%--------------------------------------------------------------------
 %% trans_call and trans_enter generate correct Icode calls/tail-calls,
@@ -1505,7 +1543,10 @@ clone_dst(Dest) ->
   New = 
     case hipe_icode:is_reg(Dest) of
       true ->
-	mk_var(reg);
+	case hipe_icode:reg_is_gcsafe(Dest) of
+	  true -> mk_var(reg_gcsafe);
+	  false -> mk_var(reg)
+	end;
       false ->
 	true = hipe_icode:is_var(Dest),	      
 	mk_var(new)
@@ -1536,6 +1577,21 @@ trans_type_test2(function2, Lbl, Arg, Arity, Env) ->
   I = hipe_icode:mk_type([Var1,Var2], function2,
 			 hipe_icode:label_name(True), map_label(Lbl)),
   {[Move1,Move2,I,True],Env2}.
+
+
+%%
+%% Makes sure that if a get_map_elements instruction will overwrite
+%% the map source, it will be done last.
+%%
+overwrite_map_last(Map, KVPs) ->
+  overwrite_map_last2(Map, KVPs, []).
+
+overwrite_map_last2(Map, [Key,Map|KVPs], _Last) ->
+  overwrite_map_last2(Map, KVPs, [Key,Map]);
+overwrite_map_last2(Map, [Key,Val|KVPs], Last) ->
+  [Key,Val|overwrite_map_last2(Map, KVPs, Last)];
+overwrite_map_last2(_Map, [], Last) ->
+  Last.
 
 %%
 %% Handles the get_map_elements instruction and the has_map_fields
@@ -1656,6 +1712,19 @@ trans_puts([{put,X}|Code], Vars, Moves, Env) ->
   end;
 trans_puts(Code, Vars, Moves, Env) ->    %% No more put operations
   {Moves, Code, Vars, Env}.
+
+trans_elements([X|Code], Vars, Moves, Env) ->
+  case type(X) of
+    var ->
+      Var = mk_var(X),
+      trans_elements(Code, [Var|Vars], Moves, Env);
+    #beam_const{value=C} ->
+      Var = mk_var(new),
+      Move = hipe_icode:mk_move(Var, hipe_icode:mk_const(C)),
+      trans_elements(Code, [Var|Vars], [Move|Moves], Env)
+  end;
+trans_elements([], Vars, Moves, Env) ->
+  {Moves, Vars, Env}.
 
 %%-----------------------------------------------------------------------
 %% The code for this instruction is a bit large because we are treating
@@ -2126,7 +2195,12 @@ mk_var(reg) ->
   T = hipe_gensym:new_var(icode),
   V = (5*T)+4,
   hipe_gensym:update_vrange(icode,V),
-  hipe_icode:mk_reg(V).
+  hipe_icode:mk_reg(V);
+mk_var(reg_gcsafe) ->
+  T = hipe_gensym:new_var(icode),
+  V = (5*T)+4, % same namespace as 'reg'
+  hipe_gensym:update_vrange(icode,V),
+  hipe_icode:mk_reg_gcsafe(V).
 
 %%-----------------------------------------------------------------------
 %% Make an icode label of proper type
@@ -2296,6 +2370,12 @@ split_code([First|Code], Label, Instr) ->
 
 split_code([Instr|Code], Label, Instr, Prev, As) when Prev =:= Label ->
   split_code_final(Code, As);  % drop both label and instruction
+split_code([{icode_end_try}|_]=Code, Label, {try_case,_}, Prev, As)
+  when Prev =:= Label ->
+  %% The try_case has been replaced with try_end as an optimization.
+  %% Keep this instruction, since it might be the only try_end instruction
+  %% for this try/catch block.
+  split_code_final(Code, As);  % drop label
 split_code([Other|_Code], Label, Instr, Prev, _As) when Prev =:= Label ->
   ?EXIT({missing_instr_after_label, Label, Instr, [Other, Prev | _As]});
 split_code([Other|Code], Label, Instr, Prev, As) ->

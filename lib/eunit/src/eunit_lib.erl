@@ -202,13 +202,13 @@ format_exception_test_() ->
         "\nymmud:rorre"++_,
         lists:reverse(lists:flatten(
           format_exception(try erlang:error(dummy)
-                           catch C:R -> {C, R, erlang:get_stacktrace()}
+                           catch C:R:S -> {C, R, S}
                            end)))),
      ?_assertMatch(
         "\nymmud:rorre"++_,
         lists:reverse(lists:flatten(
           format_exception(try erlang:error(dummy, [a])
-                           catch C:R -> {C, R, erlang:get_stacktrace()}
+                           catch C:R:S -> {C, R, S}
                            end))))].
 -endif.
 
@@ -391,7 +391,7 @@ fun_parent(F) ->
 
 -ifdef(TEST).
 fun_parent_test() ->
-    {?MODULE,fun_parent_test,0} = fun_parent(fun () -> ok end).
+    {?MODULE,fun_parent_test,0} = fun_parent(fun (A) -> {ok,A} end).
 -endif.
 
 %% ---------------------------------------------------------------------

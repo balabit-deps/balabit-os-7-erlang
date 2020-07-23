@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1997-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,6 +51,11 @@
         {reuseaddr,       boolean()} |
         {sndbuf,          non_neg_integer()} |
         {tos,             non_neg_integer()} |
+        {tclass,          non_neg_integer()} |
+        {ttl,             non_neg_integer()} |
+	{recvtos,         boolean()} |
+	{recvtclass,      boolean()} |
+	{recvttl,         boolean()} |
 	{ipv6_v6only,     boolean()}.
 -type option_name() ::
         active |
@@ -76,6 +81,12 @@
         reuseaddr |
         sndbuf |
         tos |
+        tclass |
+        ttl |
+        recvtos |
+        recvtclass |
+        recvttl |
+        pktoptions |
 	ipv6_v6only.
 -type socket() :: port().
 
@@ -84,7 +95,7 @@
 -spec open(Port) -> {ok, Socket} | {error, Reason} when
       Port :: inet:port_number(),
       Socket :: socket(),
-      Reason :: inet:posix().
+      Reason :: system_limit | inet:posix().
 
 open(Port) -> 
     open(Port, []).
@@ -97,9 +108,11 @@ open(Port) ->
               | {ifaddr, inet:socket_address()}
               | inet:address_family()
               | {port, inet:port_number()}
+              | {netns, file:filename_all()}
+              | {bind_to_device, binary()}
               | option(),
       Socket :: socket(),
-      Reason :: inet:posix().
+      Reason :: system_limit | inet:posix().
 
 open(Port, Opts0) ->
     {Mod, Opts} = inet:udp_module(Opts0),
@@ -145,11 +158,13 @@ send(S, Packet) when is_port(S) ->
     end.
 
 -spec recv(Socket, Length) ->
-                  {ok, {Address, Port, Packet}} | {error, Reason} when
+                  {ok, RecvData} | {error, Reason} when
       Socket :: socket(),
       Length :: non_neg_integer(),
+      RecvData :: {Address, Port, Packet} | {Address, Port, AncData, Packet},
       Address :: inet:ip_address() | inet:returned_non_ip_address(),
       Port :: inet:port_number(),
+      AncData :: inet:ancillary_data(),
       Packet :: string() | binary(),
       Reason :: not_owner | inet:posix().
 
@@ -162,14 +177,16 @@ recv(S,Len) when is_port(S), is_integer(Len) ->
     end.
 
 -spec recv(Socket, Length, Timeout) ->
-                  {ok, {Address, Port, Packet}} | {error, Reason} when
+                  {ok, RecvData} | {error, Reason} when
       Socket :: socket(),
       Length :: non_neg_integer(),
       Timeout :: timeout(),
+      RecvData :: {Address, Port, Packet} | {Address, Port, AncData, Packet},
       Address :: inet:ip_address() | inet:returned_non_ip_address(),
       Port :: inet:port_number(),
+      AncData :: inet:ancillary_data(),
       Packet :: string() | binary(),
-      Reason :: not_owner | inet:posix().
+      Reason :: not_owner | timeout | inet:posix().
 
 recv(S,Len,Time) when is_port(S) ->
     case inet_db:lookup_socket(S) of

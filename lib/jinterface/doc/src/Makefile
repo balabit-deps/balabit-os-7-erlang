@@ -3,7 +3,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 2000-2017. All Rights Reserved.
+# Copyright Ericsson AB 2000-2018. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -129,6 +129,7 @@ html: gifs $(HTML_REF_MAN_FILE)
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(TOP_PDF_FILE) $(TOP_PDF_FILE:%.pdf=%.fo)
 	rm -f errs core *~
@@ -136,6 +137,7 @@ clean clean_docs:
 jdoc:$(JAVA_SRC_FILES)
 	(cd ../../java_src;$(JAVADOC) -sourcepath . -d $(JAVADOC_DEST) \
 		-windowtitle $(JAVADOC_TITLE) $(JAVADOC_PKGS))
+	touch jdoc
 
 man:
 
@@ -151,15 +153,8 @@ include $(ERL_TOP)/make/otp_release_targets.mk
 release_docs_spec: docs
 	$(INSTALL_DIR) "$(RELSYSDIR)/doc/pdf"
 	$(INSTALL_DATA) $(TOP_PDF_FILE) "$(RELSYSDIR)/doc/pdf"
-	$(INSTALL_DIR) "$(RELSYSDIR)/doc/html"
-	$(INSTALL_DIR) "$(RELSYSDIR)/doc/html/java/$(JAVA_PKG_PATH)"
 	$(INSTALL_DATA) $(INFO_FILE) "$(RELSYSDIR)"
-	($(CP) -rf  ../html "$(RELSYSDIR)/doc")
-
-#	$(INSTALL_DATA) $(GIF_FILES) $(EXTRA_FILES) $(HTML_FILES) \
-#		"$(RELSYSDIR)/doc/html"
-#	$(INSTALL_DATA) $(JAVA_EXTRA_FILES) "$(RELSYSDIR)/doc/html/java"
-#	$(INSTALL_DATA) $(TOP_HTML_FILES) "$(RELSYSDIR)/doc"
+	$(INSTALL_DIR_DATA) $(HTMLDIR) "$(RELSYSDIR)/doc/html"
 
 
 release_spec:

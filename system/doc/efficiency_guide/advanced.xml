@@ -4,7 +4,7 @@
 <chapter>
   <header>
     <copyright>
-      <year>2001</year><year>2016</year>
+      <year>2001</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -151,7 +151,7 @@
       <row>
         <cell>Processes</cell>
         <cell>The maximum number of simultaneously alive Erlang processes
-	is by default 32,768. This limit can be configured at startup.
+	is by default 262,144. This limit can be configured at startup.
 	For more information, see the
 	<seealso marker="erts:erl#max_processes"><c>+P</c></seealso>
 	command-line flag in the
@@ -188,16 +188,9 @@
 	limit can be raised or lowered using the <c>+t</c> option.</cell>
       </row>
       <row>
-	<cell>Ets tables</cell>
-	<cell>Default is 1400. It can be changed with the environment
-	variable <c>ERL_MAX_ETS_TABLES</c>.</cell>
-      </row>
-      <row>
 	<cell>Elements in a tuple</cell>
-	<cell>The maximum number of elements in a tuple is 67,108,863
-	(26-bit unsigned integer). Clearly, other factors such as the
-	available memory can make it difficult to create a tuple of
-	that size.</cell>
+	<cell>The maximum number of elements in a tuple is 16,777,215
+	(24-bit unsigned integer).</cell>
       </row>
       <row>
 	<cell>Size of binary</cell>
@@ -255,10 +248,11 @@
         <cell><marker id="unique_references"/>Unique References on a Runtime System Instance</cell>
         <cell>Each scheduler thread has its own set of references, and all
         other threads have a shared set of references. Each set of references
-        consist of <c>2⁶⁴ - 1</c> unique references. That is the total
+        consist of <c>2⁶⁴ - 1</c> unique references. That is, the total
         amount of unique references that can be produced on a runtime
-        system instance is <c>(NoSchedulers + 1) * (2⁶⁴ - 1)</c>. If a
-        scheduler thread create a new reference each nano second,
+        system instance is <c>(NoSchedulers + 1) × (2⁶⁴ - 1)</c>.
+	<br/><br/>
+	If a scheduler thread create a new reference each nano second,
         references will at earliest be reused after more than 584 years.
 	That is, for the foreseeable future they are unique enough.</cell>
       </row>

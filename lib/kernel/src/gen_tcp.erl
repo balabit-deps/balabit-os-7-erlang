@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %% 
-%% Copyright Ericsson AB 1997-2016. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %% 
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -62,7 +62,14 @@
         {show_econnreset, boolean()} |
         {sndbuf,          non_neg_integer()} |
         {tos,             non_neg_integer()} |
+        {tclass,          non_neg_integer()} |
+        {ttl,             non_neg_integer()} |
+	{recvtos,         boolean()} |
+	{recvtclass,      boolean()} |
+	{recvttl,         boolean()} |
 	{ipv6_v6only,     boolean()}.
+-type pktoptions_value() ::
+        {pktoptions, inet:ancillary_data()}.
 -type option_name() ::
         active |
         buffer |
@@ -81,6 +88,7 @@
         nodelay |
         packet |
         packet_size |
+        pktoptions |
         priority |
         {raw,
          Protocol :: non_neg_integer(),
@@ -94,6 +102,12 @@
         show_econnreset |
         sndbuf |
         tos |
+        tclass |
+        ttl |
+        recvtos |
+        recvtclass |
+        recvttl |
+        pktoptions |
 	ipv6_v6only.
 -type connect_option() ::
         {ip, inet:socket_address()} |
@@ -102,6 +116,8 @@
         inet:address_family() |
         {port, inet:port_number()} |
         {tcp_module, module()} |
+        {netns, file:filename_all()} |
+        {bind_to_device, binary()} |
         option().
 -type listen_option() ::
         {ip, inet:socket_address()} |
@@ -111,11 +127,13 @@
         {port, inet:port_number()} |
         {backlog, B :: non_neg_integer()} |
         {tcp_module, module()} |
+        {netns, file:filename_all()} |
+        {bind_to_device, binary()} |
         option().
 -type socket() :: port().
 
 -export_type([option/0, option_name/0, connect_option/0, listen_option/0,
-              socket/0]).
+              socket/0, pktoptions_value/0]).
 
 %%
 %% Connect a socket
@@ -138,7 +156,7 @@ connect(Address, Port, Opts) ->
       Options :: [connect_option()],
       Timeout :: timeout(),
       Socket :: socket(),
-      Reason :: inet:posix().
+      Reason :: timeout | inet:posix().
 
 connect(Address, Port, Opts, Time) ->
     Timer = inet:start_timer(Time),
@@ -202,7 +220,7 @@ listen(Port, Opts0) ->
 -spec accept(ListenSocket) -> {ok, Socket} | {error, Reason} when
       ListenSocket :: socket(),
       Socket :: socket(),
-      Reason :: closed | timeout | system_limit | inet:posix().
+      Reason :: closed | system_limit | inet:posix().
 
 accept(S) ->
     case inet_db:lookup_socket(S) of
@@ -294,7 +312,7 @@ recv(S, Length) when is_port(S) ->
       Length :: non_neg_integer(),
       Timeout :: timeout(),
       Packet :: string() | binary() | HttpPacket,
-      Reason :: closed | inet:posix(),
+      Reason :: closed | timeout | inet:posix(),
       HttpPacket :: term().
 
 recv(S, Length, Time) when is_port(S) ->

@@ -43,10 +43,10 @@
 #endif
 #ifdef HAVE_WORKING_POSIX_OPENPT
 #  ifndef _XOPEN_SOURCE
-     /* On OS X and BSD, we must leave _XOPEN_SOURCE undefined in order for
-      * the prototype of vsyslog() to be included.
+     /* On OS X, BSD and Solaris, we must leave _XOPEN_SOURCE undefined in order
+      * for the prototype of vsyslog() to be included.
       */
-#    if !(defined(__APPLE__) || defined(__FreeBSD__) || defined(__DragonFly__))
+#    if !(defined(__APPLE__) || defined(__FreeBSD__) || defined(__DragonFly__) || defined(__sun))
 #      define _XOPEN_SOURCE 600
 #    endif
 #  endif
@@ -627,12 +627,14 @@ static void pass_on(pid_t childpid)
 	    status("Pty master read; ");
 #endif
 	    if ((len = sf_read(mfd, buf, BUFSIZ)) <= 0) {
+		int saved_errno = errno;
 		sf_close(rfd);
 		if(wfd) sf_close(wfd);
 		sf_close(mfd);
 		unlink(fifo1);
 		unlink(fifo2);
 		if (len < 0) {
+		    errno = saved_errno;
 		    if(errno == EIO)
 			ERROR0(LOG_ERR,"Erlang closed the connection.");
 		    else
@@ -1342,10 +1344,12 @@ static int sf_open(const char *path, int type, mode_t mode) {
 
     return fd;
 }
+
 static int sf_close(int fd) {
     /* "close() should not be retried after an EINTR" */
     return close(fd);
 }
+
 /* Extract any control sequences that are ment only for run_erl
  * and should not be forwarded to the pty.
  */

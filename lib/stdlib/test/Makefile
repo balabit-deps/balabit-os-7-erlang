@@ -69,6 +69,7 @@ MODULES= \
 	sets_test_lib \
 	sofs_SUITE \
 	stdlib_SUITE \
+	stdlib_bench_SUITE \
 	string_SUITE \
 	supervisor_1 \
 	supervisor_2 \
@@ -86,6 +87,8 @@ MODULES= \
 	timer_simple_SUITE \
 	unicode_SUITE \
 	unicode_util_SUITE \
+	uri_string_SUITE \
+	uri_string_property_test_SUITE \
 	win32reg_SUITE \
 	y2k_SUITE \
 	select_SUITE \
@@ -93,13 +96,12 @@ MODULES= \
 	random_unicode_list \
 	random_iolist \
 	error_logger_forwarder \
-	maps_SUITE
+	maps_SUITE \
+	zzz_SUITE
 
-ERL_FILES= $(MODULES:%=%.erl)
+ERTS_MODULES= erts_test_utils
 
-TARGET_FILES= $(MODULES:%=$(EBIN)/%.$(EMULATOR))
-
-INSTALL_PROGS= $(TARGET_FILES)
+ERL_FILES= $(MODULES:%=%.erl) $(ERTS_MODULES:%=$(ERL_TOP)/erts/emulator/test/%.erl)
 
 # ----------------------------------------------------
 # Release directory specification
@@ -124,7 +126,7 @@ COVERFILE=stdlib.cover
 # ----------------------------------------------------
 
 make_emakefile:
-	$(ERL_TOP)/make/make_emakefile $(ERL_COMPILE_FLAGS) -o$(EBIN) $(MODULES) \
+	$(ERL_TOP)/make/make_emakefile $(ERL_COMPILE_FLAGS) -o$(EBIN) $(MODULES) $(ERTS_MODULES) \
 	> $(EMAKEFILE)
 
 tests debug opt: make_emakefile
@@ -146,9 +148,9 @@ release_spec: opt
 
 release_tests_spec: make_emakefile
 	$(INSTALL_DIR) "$(RELSYSDIR)"
-	$(INSTALL_DATA) stdlib.spec $(EMAKEFILE) \
+	$(INSTALL_DATA) stdlib.spec stdlib_bench.spec $(EMAKEFILE) \
 		$(ERL_FILES) $(COVERFILE) "$(RELSYSDIR)"
 	chmod -R u+w "$(RELSYSDIR)"
-	@tar cf - *_SUITE_data | (cd "$(RELSYSDIR)"; tar xf -)
+	@tar cf - *_SUITE_data property_test | (cd "$(RELSYSDIR)"; tar xf -)
 
 release_docs_spec:

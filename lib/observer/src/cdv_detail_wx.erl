@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2013-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2013-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ init([Id, Data, ParentFrame, Callback, App, Parent]) ->
     display_progress(ParentFrame,App),
     case Callback:get_details(Id, Data) of
 	{ok,Details} ->
+            display_progress_pulse(Callback,Id),
 	    init(Id,ParentFrame,Callback,App,Parent,Details);
 	{yes_no, Info, Fun} ->
             destroy_progress(App),
@@ -69,14 +70,23 @@ display_progress(ParentFrame,cdv) ->
                                          "Reading data");
 display_progress(_,_) ->
     ok.
+
+%% Display pulse while creating process detail page with much data
+display_progress_pulse(cdv_proc_cb,Pid) ->
+    observer_lib:report_progress({ok,"Displaying data for "++Pid}),
+    observer_lib:report_progress({ok,start_pulse});
+display_progress_pulse(_,_) ->
+    ok.
+
 destroy_progress(cdv) ->
-    observer_lib:destroy_progress_dialog();
+    observer_lib:sync_destroy_progress_dialog();
 destroy_progress(_) ->
     ok.
 
 init(Id,ParentFrame,Callback,App,Parent,{Title,Info,TW}) ->
+    Scale = observer_wx:get_scale(),
     Frame=wxFrame:new(ParentFrame, ?wxID_ANY, [Title],
-		      [{style, ?wxDEFAULT_FRAME_STYLE}, {size, {850,600}}]),
+		      [{style, ?wxDEFAULT_FRAME_STYLE}, {size, {Scale*850,Scale*600}}]),
     MenuBar = wxMenuBar:new(),
     create_menus(MenuBar),
     wxFrame:setMenuBar(Frame, MenuBar),

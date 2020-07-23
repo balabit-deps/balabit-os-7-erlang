@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2005-2016. All Rights Reserved.
+%% Copyright Ericsson AB 2005-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -33,7 +33,13 @@
 	 atom_to_binary/1,min_max/1, erlang_halt/1,
          erl_crash_dump_bytes/1,
 	 is_builtin/1, error_stacktrace/1,
-	 error_stacktrace_during_call_trace/1]).
+	 error_stacktrace_during_call_trace/1,
+         group_leader_prio/1, group_leader_prio_dirty/1,
+         is_process_alive/1,
+         process_info_blast/1,
+         os_env_case_sensitivity/1,
+         test_length/1,
+         fixed_apply_badarg/1]).
 
 suite() ->
     [{ct_hooks,[ts_install_cth]},
@@ -46,7 +52,10 @@ all() ->
      display, display_string, list_to_utf8_atom,
      atom_to_binary, binary_to_atom, binary_to_existing_atom,
      erl_crash_dump_bytes, min_max, erlang_halt, is_builtin,
-     error_stacktrace, error_stacktrace_during_call_trace].
+     error_stacktrace, error_stacktrace_during_call_trace,
+     group_leader_prio, group_leader_prio_dirty,
+     is_process_alive, process_info_blast, os_env_case_sensitivity,
+     test_length,fixed_apply_badarg].
 
 %% Uses erlang:display to test that erts_printf does not do deep recursion
 display(Config) when is_list(Config) ->
@@ -438,6 +447,17 @@ os_env_long(Min, Max, Value) ->
     true = os:unsetenv(EnvVar),
     os_env_long(Min+1, Max, Value).
 
+os_env_case_sensitivity(Config) when is_list(Config) ->
+    %% The keys in os:getenv/putenv must be case-insensitive on Windows, and
+    %% case-sensitive elsewhere.
+    true = os:putenv("os_env_gurka", "gaffel"),
+    Expected = case os:type() of
+                   {win32, _} -> "gaffel";
+                   _ -> false
+               end,
+    Expected = os:getenv("OS_ENV_GURKA"),
+    ok.
+
 %% Test that string:to_integer does not Halloc in wrong order.
 otp_7526(Config) when is_list(Config) ->
     ok = test_7526(256).
@@ -592,6 +612,16 @@ binary_to_existing_atom(Config) when is_list(Config) ->
 
     UnlikelyAtom = binary_to_atom(id(UnlikelyBin), latin1),
     UnlikelyAtom = binary_to_existing_atom(UnlikelyBin, latin1),
+
+    %% ERL-944; a binary that was too large would overflow the latin1-to-utf8
+    %% conversion buffer.
+    OverflowAtom = <<0:511/unit:8,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133,
+                     196, 133, 196, 133, 196, 133, 196, 133, 196, 133>>,
+    {'EXIT', _} = (catch binary_to_existing_atom(OverflowAtom, latin1)),
+
     ok.
 
 
@@ -731,10 +761,12 @@ erlang_halt(Config) when is_list(Config) ->
                                  [broken_halt, "Validate correct crash dump"]),
     {ok,_} = wait_until_stable_size(CrashDump,-1),
     {ok, Bin} = file:read_file(CrashDump),
-    case {string:str(binary_to_list(Bin),"\n=end\n"),
-          string:str(binary_to_list(Bin),"\r\n=end\r\n")} of
-        {0,0} -> ct:fail("Could not find end marker in crash dump");
-        _ -> ok
+    case {string:find(Bin, <<"\n=end\n">>),
+          string:find(Bin, <<"\r\n=end\r\n">>)} of
+        {nomatch,nomatch} ->
+            ct:fail("Could not find end marker in crash dump");
+        {_,_} ->
+            ok
     end.
 
 wait_until_stable_size(_File,-10) ->
@@ -779,14 +811,20 @@ is_builtin(_Config) ->
 		       {F,A} <- M:module_info(exports)],
     Exp = ordsets:from_list(Exp0),
 
-    %% erlang:apply/3 is considered to be built-in, but is not
-    %% implemented as other BIFs.
+    %% Built-ins implemented as special instructions.
+    Instructions = [{erlang,apply,2},{erlang,apply,3},{erlang,yield,0}],
 
-    Builtins0 = [{erlang,apply,3}|erlang:system_info(snifs)],
+    Builtins0 = Instructions ++ erlang:system_info(snifs),
     Builtins = ordsets:from_list(Builtins0),
-    NotBuiltin = ordsets:subtract(Exp, Builtins),
-    _ = [true = erlang:is_builtin(M, F, A) || {M,F,A} <- Builtins],
-    _ = [false = erlang:is_builtin(M, F, A) || {M,F,A} <- NotBuiltin],
+
+    Fakes = [{M,F,42} || {M,F,_} <- Instructions],
+    All = ordsets:from_list(Fakes ++ Exp),
+    NotBuiltin = ordsets:subtract(All, Builtins),
+
+    _ = [{true,_} = {erlang:is_builtin(M, F, A),MFA} ||
+            {M,F,A}=MFA <- Builtins],
+    _ = [{false,_} = {erlang:is_builtin(M, F, A),MFA} ||
+            {M,F,A}=MFA <- NotBuiltin],
 
     ok.
 
@@ -817,7 +855,6 @@ error_stacktrace_during_call_trace(Config) when is_list(Config) ->
 	end
     end,
     ok.
-    
 
 error_stacktrace_test() ->
     Types = [apply_const_last, apply_const, apply_last,
@@ -955,9 +992,273 @@ do_error_1(call) ->
     erlang:error(id(oops)).
 
 
+group_leader_prio(Config) when is_list(Config) ->
+    group_leader_prio_test(false).
 
+group_leader_prio_dirty(Config) when is_list(Config) ->
+    group_leader_prio_test(true).
 
-%% Helpers
+group_leader_prio_test(Dirty) ->
+    %%
+    %% Unfortunately back in the days node local group_leader/2 was not
+    %% implemented as sending an asynchronous signal to the process to change
+    %% group leader for. Instead it has always been synchronously changed, and
+    %% nothing in the documentation have hinted otherwise... Therefore I do not
+    %% dare the change this.
+    %%
+    %% In order to prevent priority inversion, the priority of the receiver of
+    %% the group leader signal is elevated while handling incoming signals if
+    %% the sender has a higher priority than the receiver. This test tests that
+    %% the priority elevation actually works...
+    %%
+    Tester = self(),
+    Init = erlang:whereis(init),
+    GL = erlang:group_leader(),
+    process_flag(priority, max),
+    {TestProcFun, NTestProcs}
+        = case Dirty of
+              false ->
+                  %% These processes will handle all incoming signals
+                  %% by them selves...
+                  {fun () ->
+                           Tester ! {alive, self()},
+                           receive after infinity -> ok end
+                   end,
+                   100};
+              true ->
+                  %% These processes wont handle incoming signals by
+                  %% them selves since they are stuck on dirty schedulers
+                  %% when we try to change group leader. A dirty process
+                  %% signal handler process (system process) will be notified
+                  %% of the need to handle incoming signals for these processes,
+                  %% and will instead handle the signal for these processes...
+                  {fun () ->
+                           %% The following sends the message '{alive, self()}'
+                           %% to Tester once on a dirty io scheduler, then wait
+                           %% there until the process terminates...
+                           erts_debug:dirty_io(alive_waitexiting, Tester)
+                   end,
+                   erlang:system_info(dirty_io_schedulers)}
+          end,
+    TPs = lists:map(fun (_) ->
+                            spawn_opt(TestProcFun,
+                                      [link, {priority, normal}])
+                    end, lists:seq(1, NTestProcs)),
+    lists:foreach(fun (TP) -> receive {alive, TP} -> ok end end, TPs),
+    TLs = lists:map(fun (_) ->
+                            spawn_opt(fun () -> tok_loop() end,
+                                      [link, {priority, high}])
+                    end,
+                    lists:seq(1, 2*erlang:system_info(schedulers))),
+    %% Wait to ensure distribution of high prio processes over schedulers...
+    receive after 1000 -> ok end,
+    %%
+    %% Test that we can get group-leader signals through to normal prio
+    %% processes from a max prio process even though all schedulers are filled
+    %% with executing high prio processes.
+    %%
+    lists:foreach(fun (_) ->
+                          lists:foreach(fun (TP) ->
+                                                erlang:yield(),
+                                                %% whitebox -- Enqueue some signals on it
+                                                %% preventing us from hogging its main lock
+                                                %% and set group-leader directly....
+                                                erlang:demonitor(erlang:monitor(process, TP)),
+                                                true = erlang:group_leader(Init, TP),
+                                                {group_leader, Init} = process_info(TP, group_leader),
+                                                erlang:demonitor(erlang:monitor(process, TP)),
+                                                true = erlang:group_leader(GL, TP),
+                                                {group_leader, GL} = process_info(TP, group_leader)
+                                        end,
+                                        TPs)
+                  end,
+                  lists:seq(1,100)),
+    %%
+    %% Also test when it is exiting...
+    %%
+    lists:foreach(fun (TP) ->
+                          erlang:yield(),
+                          M = erlang:monitor(process, TP),
+                          unlink(TP),
+                          exit(TP, bang),
+                          badarg = try
+                                       true = erlang:group_leader(Init, TP)
+                                   catch
+                                       error : What -> What
+                                   end,
+                          receive
+                              {'DOWN', M, process, TP, Reason} ->
+                                  bang = Reason
+                          end
+                  end,
+                  TPs),
+    lists:foreach(fun (TL) ->
+                          M = erlang:monitor(process, TL),
+                          unlink(TL),
+                          exit(TL, bang),
+                          receive
+                              {'DOWN', M, process, TL, Reason} ->
+                                  bang = Reason
+                          end
+                  end,
+                  TLs),
+    ok.
+
+is_process_alive(Config) when is_list(Config) ->
+    process_flag(priority, max),
+    Ps = lists:map(fun (_) ->
+                           spawn_opt(fun () -> tok_loop() end,
+                                     [{priority, high}, link])
+                   end,
+                   lists:seq(1, 2*erlang:system_info(schedulers))),
+    receive after 1000 -> ok end, %% Wait for load to spread
+    lists:foreach(fun (P) ->
+                          %% Ensure that signal order is preserved
+                          %% and that we are not starved due to
+                          %% priority inversion
+                          true = erlang:is_process_alive(P),
+                          unlink(P),
+                          true = erlang:is_process_alive(P),
+                          exit(P, kill),
+                          false = erlang:is_process_alive(P)
+                  end,
+                  Ps),
+    ok.
+
+process_info_blast(Config) when is_list(Config) ->
+    Tester = self(),
+    NoAttackers = 1000,
+    NoAL = lists:seq(1, NoAttackers),
+    Consume = make_ref(),
+    Victim = spawn_link(fun () ->
+                                receive
+                                    Consume ->
+                                        ok
+                                end,
+                                consume_msgs()
+                        end),
+    AFun = fun () ->
+                   Victim ! hej,
+                   Res = process_info(Victim, message_queue_len),
+                   Tester ! {self(), Res}
+           end,
+    Attackers0 = lists:map(fun (_) ->
+                                   spawn_link(AFun)
+                           end,
+                           NoAL),
+    lists:foreach(fun (A) ->
+                          receive
+                              {A, Res} ->
+                                  case Res of
+                                      {message_queue_len, Len} when Len > 0, Len =< NoAttackers ->
+                                          Len;
+                                      Error ->
+                                          exit({unexpected, Error})
+                                  end
+                          end
+                  end,
+                  Attackers0),
+    Attackers1 = lists:map(fun (_) ->
+                                   spawn_link(AFun)
+                           end,
+                           NoAL),
+    Victim ! Consume,
+    lists:foreach(fun (A) ->
+                          receive
+                              {A, Res} ->
+                                  case Res of
+                                      {message_queue_len, Len} when Len >= 0, Len =< 2*NoAttackers+1 ->
+                                          ok;
+                                      undefined ->
+                                          ok;
+                                      Error ->
+                                          exit({unexpected, Error})
+                                  end
+                          end
+                  end,
+                  Attackers1),
+    KillFun = fun (P) ->
+                      unlink(P),
+                      exit(P, kill),
+                      false = erlang:is_process_alive(P)
+              end,
+    lists:foreach(fun (A) -> KillFun(A) end, Attackers0),
+    lists:foreach(fun (A) -> KillFun(A) end, Attackers1),
+    KillFun(Victim),
+    ok.
+
+consume_msgs() ->
+    receive
+        _ ->
+            consume_msgs()
+    after 0 ->
+              ok
+    end.
+
+%% Test that length/1 returns the correct result after trapping, and
+%% also that the argument is correct in the stacktrace for a badarg
+%% exception.
+
+test_length(_Config) ->
+    {Start,Inc} = case test_server:timetrap_scale_factor() of
+                      1 -> {16*4000,3977};
+                      _ -> {100,1}
+            end,
+    Good = lists:reverse(lists:seq(1, Start)),
+    Bad = Good ++ [bad|cons],
+    test_length(Start, 10*Start, Inc, Good, Bad),
+
+    %% Test that calling length/1 from a match spec works.
+    MsList = lists:seq(1, 2*Start),
+    MsInput = [{tag,Good},{tag,MsList}],
+    Ms0 = [{{tag,'$1'},[{'>',{length,'$1'},Start}],['$1']}],
+    Ms = ets:match_spec_compile(Ms0),
+    [MsList] = ets:match_spec_run(MsInput, Ms),
+    ok.
+
+test_length(I, N, Inc, Good, Bad) when I < N ->
+    Length = id(length),
+    I = length(Good),
+    I = erlang:Length(Good),
+
+    %% Test length/1 in guards.
+    if
+        length(Good) =:= I ->
+            ok
+    end,
+    if
+        length(Bad) =:= I ->
+            error(should_fail);
+        true ->
+            ok
+    end,
+
+    {'EXIT',{badarg,[{erlang,length,[[I|_]],_}|_]}} = (catch length(Bad)),
+    {'EXIT',{badarg,[{erlang,length,[[I|_]],_}|_]}} = (catch erlang:Length(Bad)),
+    IncSeq = lists:seq(I + 1, I + Inc),
+    test_length(I+Inc, N, Inc,
+                lists:reverse(IncSeq, Good),
+                lists:reverse(IncSeq, Bad));
+test_length(_, _, _, _, _) -> ok.
+
+%% apply/3 with a fixed number of arguments didn't include all arguments on
+%% badarg exceptions.
+fixed_apply_badarg(Config) when is_list(Config) ->
+    Bad = id({}),
+
+    {'EXIT',{badarg, [{erlang,apply,[{},baz,[a,b]],[]} | _]}} =
+        (catch Bad:baz(a,b)),
+    {'EXIT',{badarg, [{erlang,apply,[baz,{},[c,d]],[]} | _]}} =
+        (catch baz:Bad(c,d)),
+
+    {'EXIT',{badarg, [{erlang,apply,[{},baz,[e,f]],[]} | _]}} =
+        (catch apply(Bad,baz,[e,f])),
+    {'EXIT',{badarg, [{erlang,apply,[baz,{},[g,h]],[]} | _]}} =
+        (catch apply(baz,Bad,[g,h])),
+
+    ok.
+
+%% helpers
     
 id(I) -> I.
 
@@ -997,3 +1298,11 @@ hostname([$@ | Hostname]) ->
     list_to_atom(Hostname);
 hostname([_C | Cs]) ->
     hostname(Cs).
+
+tok_loop() ->
+    tok_loop(hej).
+
+tok_loop(hej) ->
+    tok_loop(hopp);
+tok_loop(hopp) ->
+    tok_loop(hej).

@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -39,6 +39,8 @@
 -define(FILE_FIN_PER_TESTCASE(Config), Config).
 -endif.
 
+-define(PRIM_FILE, prim_file).
+
 -module(?FILE_SUITE).
 
 -export([all/0, suite/0,groups/0,init_per_suite/1, end_per_suite/1, 
@@ -54,7 +56,8 @@
 	  open1/1,
 	  old_modes/1, new_modes/1, path_open/1, open_errors/1]).
 -export([ file_info_basic_file/1, file_info_basic_directory/1,
-	  file_info_bad/1, file_info_times/1, file_write_file_info/1]).
+	  file_info_bad/1, file_info_times/1, file_write_file_info/1,
+          file_wfi_helpers/1]).
 -export([rename/1, access/1, truncate/1, datasync/1, sync/1,
 	 read_write/1, pread_write/1, append/1, exclusive/1]).
 -export([ e_delete/1, e_rename/1, e_make_dir/1, e_del_dir/1]).
@@ -97,6 +100,12 @@
 
 -export([unicode_mode/1]).
 
+-export([volume_relative_paths/1,unc_paths/1]).
+
+-export([tiny_writes/1, tiny_writes_delayed/1,
+         large_writes/1, large_writes_delayed/1,
+         tiny_reads/1, tiny_reads_ahead/1]).
+
 %% Debug exports
 -export([create_file_slow/2, create_file/2, create_bin/2]).
 -export([verify_file/2, verify_bin/3]).
@@ -107,6 +116,8 @@
 -export([disc_free/1, memsize/0]).
 
 -include_lib("common_test/include/ct.hrl").
+-include_lib("common_test/include/ct_event.hrl").
+
 -include_lib("kernel/include/file.hrl").
 
 -define(THROW_ERROR(RES), throw({fail, ?LINE, RES})).
@@ -118,13 +129,13 @@ suite() ->
 
 all() -> 
     [unicode, altname, read_write_file, {group, dirs},
-     {group, files}, delete, rename, names, {group, errors},
-     {group, compression}, {group, links}, copy,
+     {group, files}, delete, rename, names, volume_relative_paths, unc_paths,
+     {group, errors}, {group, compression}, {group, links}, copy,
      delayed_write, read_ahead, segment_read, segment_write,
      ipread, pid2name, interleaved_read_write, otp_5814, otp_10852,
      large_file, large_write, read_line_1, read_line_2, read_line_3,
      read_line_4, standard_io, old_io_protocol,
-     unicode_mode
+     unicode_mode, {group, bench}
     ].
 
 groups() -> 
@@ -142,7 +153,8 @@ groups() ->
      {pos, [], [pos1, pos2, pos3]},
      {file_info, [],
       [file_info_basic_file, file_info_basic_directory,
-       file_info_bad, file_info_times, file_write_file_info]},
+       file_info_bad, file_info_times, file_write_file_info,
+       file_wfi_helpers]},
      {consult, [], [consult1, path_consult]},
      {eval, [], [eval1, path_eval]},
      {script, [], [script1, path_script]},
@@ -154,11 +166,19 @@ groups() ->
        write_compressed, compress_errors, catenated_gzips,
        compress_async_crash]},
      {links, [],
-      [make_link, read_link_info_for_non_link, symlinks]}].
+      [make_link, read_link_info_for_non_link, symlinks]},
+     {bench, [],
+      [tiny_writes, tiny_writes_delayed,
+       large_writes, large_writes_delayed,
+       tiny_reads, tiny_reads_ahead]}].
 
 init_per_group(_GroupName, Config) ->
     Config.
 
+end_per_group(bench, Config) ->
+    ScratchDir = proplists:get_value(priv_dir, Config),
+    file:delete(filename:join(ScratchDir, "benchmark_scratch_file")),
+    Config;
 end_per_group(_GroupName, Config) ->
     Config.
 
@@ -381,11 +401,11 @@ read_write_0(Str, {Func, ReadFun}, Options) ->
 	    io:format("~p:~p: ~p ERROR: ~ts vs~n             ~w~n  - ~p~n",
 		      [?MODULE, Line, Func, Str, ReadBytes, Options]),
 	    exit({error, ?LINE});
-	  error:What ->
+	  error:What:Stacktrace ->
 	    io:format("~p:??: ~p ERROR: ~p from~n  ~w~n  ~p~n",
 		      [?MODULE, Func, What, Str, Options]),
 
-	    io:format("\t~p~n", [erlang:get_stacktrace()]),
+	    io:format("\t~p~n", [Stacktrace]),
 	    exit({error, ?LINE})
     end.
 
@@ -473,7 +493,7 @@ um_check_unicode(_Utf8Bin, {ok, _ListOrBin}, _, _UTF8_) ->
 um_filename(Bin, Dir, Options) when is_binary(Bin) ->
     um_filename(binary_to_list(Bin), Dir, Options);
 um_filename(Str = [_|_], Dir, Options) ->
-    Name = hd(string:tokens(Str, ":")),
+    Name = hd(string:lexemes(Str, ":")),
     Enc = atom_to_list(proplists:get_value(encoding, Options, latin1)),
     File = case lists:member(binary, Options) of
 	       true ->
@@ -638,6 +658,10 @@ cur_dir_0(Config) when is_list(Config) ->
 	    {ok,NewDirFiles} = ?FILE_MODULE:list_dir("."),
 	    true = lists:member(UncommonName,NewDirFiles),
 
+	    %% Ensure that we get the same result with a trailing slash; the
+	    %% APIs used on Windows will choke on them if passed directly.
+	    {ok,NewDirFiles} = ?FILE_MODULE:list_dir("./"),
+
 	    %% Delete the directory and return to the old current directory
 	    %% and check that the created file isn't there (too!)
 	    expect({error, einval}, {error, eacces}, 
@@ -690,9 +714,14 @@ win_cur_dir_1(_Config) ->
     %% Get the drive letter from the current directory,
     %% and try to get current directory for that drive.
 
-    [Drive,$:|_] = BaseDir,
-    {ok,BaseDir} = ?FILE_MODULE:get_cwd([Drive,$:]),
+    [CurDrive,$:|_] = BaseDir,
+    {ok,BaseDir} = ?FILE_MODULE:get_cwd([CurDrive,$:]),
     io:format("BaseDir = ~s\n", [BaseDir]),
+
+    %% We should error out on non-existent drives. Any reasonable system will
+    %% have at least one.
+    CurDirs = [?FILE_MODULE:get_cwd([Drive,$:]) || Drive <- lists:seq($A, $Z)],
+    lists:member({error,eaccess}, CurDirs),
 
     %% Unfortunately, there is no way to move away from the
     %% current drive as we can't use the "subst" command from
@@ -831,7 +860,7 @@ no_untranslatable_names() ->
     end.
 
 start_node(Name, Args) ->
-    [_,Host] = string:tokens(atom_to_list(node()), "@"),
+    [_,Host] = string:lexemes(atom_to_list(node()), "@"),
     ct:log("Trying to start ~w@~s~n", [Name,Host]),
     case test_server:start_node(Name, peer, [{args,Args}]) of
 	{error,Reason} ->
@@ -1019,6 +1048,23 @@ close(Config) when is_list(Config) ->
     Val = ?FILE_MODULE:close(Fd1),
     io:format("Second close gave: ~p",[Val]),
 
+    %% All operations on a closed raw file should EINVAL, even if they're not
+    %% supported on the current platform.
+    {ok,Fd2} = ?FILE_MODULE:open(Name, [read, write, raw]),
+    ok = ?FILE_MODULE:close(Fd2),
+
+    {error, einval} = ?FILE_MODULE:advise(Fd2, 5, 5, normal),
+    {error, einval} = ?FILE_MODULE:allocate(Fd2, 5, 5),
+    {error, einval} = ?FILE_MODULE:close(Fd2),
+    {error, einval} = ?FILE_MODULE:datasync(Fd2),
+    {error, einval} = ?FILE_MODULE:position(Fd2, 5),
+    {error, einval} = ?FILE_MODULE:pread(Fd2, 5, 1),
+    {error, einval} = ?FILE_MODULE:pwrite(Fd2, 5, "einval please"),
+    {error, einval} = ?FILE_MODULE:read(Fd2, 1),
+    {error, einval} = ?FILE_MODULE:sync(Fd2),
+    {error, einval} = ?FILE_MODULE:truncate(Fd2),
+    {error, einval} = ?FILE_MODULE:write(Fd2, "einval please"),
+
     [] = flush(),
     ok.
 
@@ -1132,8 +1178,8 @@ pread_write_test(File, Data) ->
 	   end,
     I = Size + 17,
     ok = ?FILE_MODULE:pwrite(File, 0, Data),
-    Res = ?FILE_MODULE:pread(File, 0, I),
-    {ok, Data} = Res,
+    {ok, Data} = ?FILE_MODULE:pread(File, 0, I),
+    {ok, [Data]} = ?FILE_MODULE:pread(File, [{0, I}]),
     eof = ?FILE_MODULE:pread(File, I, 1),
     ok = ?FILE_MODULE:pwrite(File, [{0, Data}, {I, Data}]),
     {ok, [Data, eof, Data]} =
@@ -1320,6 +1366,10 @@ file_info_basic_file(Config) when is_list(Config) ->
     {ok,Fd1} = ?FILE_MODULE:open(Name, write),
     io:put_chars(Fd1, "foo bar"),
     ok = ?FILE_MODULE:close(Fd1),
+
+    %% Don't crash the file server when passing incorrect arguments.
+    {error,badarg} = ?FILE_MODULE:read_file_info(Name, [{time, gurka}]),
+    {error,badarg} = ?FILE_MODULE:read_file_info([#{} | gaffel]),
 
     %% Test that the file has the expected attributes.
     %% The times are tricky, so we will save them to a separate test case.
@@ -1560,6 +1610,39 @@ file_write_file_info(Config) when is_list(Config) ->
     %% Make the file writeable again, so that we can remove the
     %% test suites ... :-)
     ?FILE_MODULE:write_file_info(Name1, #file_info{mode=8#600}),
+
+    [] = flush(),
+    ok.
+
+file_wfi_helpers(Config) when is_list(Config) ->
+    RootDir = get_good_directory(Config),
+    io:format("RootDir = ~p", [RootDir]),
+
+    Name = filename:join(RootDir,
+                         atom_to_list(?MODULE) ++ "_wfi_helpers"),
+
+    ok = ?FILE_MODULE:write_file(Name, "hello again"),
+    NewTime = {{1997, 02, 15}, {13, 18, 20}},
+    ok = ?FILE_MODULE:change_time(Name, NewTime, NewTime),
+
+    {ok, #file_info{atime=NewActAtime, mtime=NewTime}} =
+        ?FILE_MODULE:read_file_info(Name),
+
+    NewFilteredAtime = filter_atime(NewTime, Config),
+    NewFilteredAtime = filter_atime(NewActAtime, Config),
+
+    %% Make the file unwritable
+    ok = ?FILE_MODULE:change_mode(Name, 8#400),
+    {error, eacces} = ?FILE_MODULE:write_file(Name, "hello again"),
+
+    %% ... and writable again
+    ok = ?FILE_MODULE:change_mode(Name, 8#600),
+    ok = ?FILE_MODULE:write_file(Name, "hello again"),
+
+    %% We have no idea which users will work, so all we can do is to check
+    %% that it returns enoent instead of crashing.
+    {error, enoent} = ?FILE_MODULE:change_group("bogus file name", 0),
+    {error, enoent} = ?FILE_MODULE:change_owner("bogus file name", 0),
 
     [] = flush(),
     ok.
@@ -2044,13 +2127,22 @@ names(Config) when is_list(Config) ->
     ok = ?FILE_MODULE:close(Fd2),
     {ok,Fd3} = ?FILE_MODULE:open(Name3,read),
     ok = ?FILE_MODULE:close(Fd3),
+
+    %% Now try the same on raw files.
+    {ok,Fd4} = ?FILE_MODULE:open(Name2, [read, raw]),
+    ok = ?FILE_MODULE:close(Fd4),
+    {ok,Fd4f} = ?FILE_MODULE:open(lists:flatten(Name2), [read, raw]),
+    ok = ?FILE_MODULE:close(Fd4f),
+    {ok,Fd5} = ?FILE_MODULE:open(Name3, [read, raw]),
+    ok = ?FILE_MODULE:close(Fd5),
+
     case length(Name1) > 255 of
 	true ->
 	    io:format("Path too long for an atom:\n\n~p\n", [Name1]);
 	false ->
 	    Name4 = list_to_atom(Name1),
-	    {ok,Fd4} = ?FILE_MODULE:open(Name4,read),
-	    ok = ?FILE_MODULE:close(Fd4)
+	    {ok,Fd6} = ?FILE_MODULE:open(Name4,read),
+	    ok = ?FILE_MODULE:close(Fd6)
     end,
 
     %% Try some path names
@@ -2073,6 +2165,49 @@ names(Config) when is_list(Config) ->
     end,
     [] = flush(),
     ok.
+
+volume_relative_paths(Config) when is_list(Config) ->
+    case os:type() of
+        {win32, _} ->
+            {ok, [Drive, $: | _]} = file:get_cwd(),
+            %% Relative to current device root.
+            {ok, RootInfo} = file:read_file_info([Drive, $:, $/]),
+            {ok, RootInfo} = file:read_file_info("/"),
+            %% Relative to current device directory.
+            {ok, DirContents} = file:list_dir([Drive, $:]),
+            {ok, DirContents} = file:list_dir("."),
+            [] = flush(),
+            ok;
+        _ ->
+            {skip, "This test is Windows-specific."}
+    end.
+
+unc_paths(Config) when is_list(Config) ->
+    case os:type() of
+        {win32, _} ->
+            %% We assume administrative shares are set up and reachable, and we
+            %% settle for testing presence as some of the returned data is
+            %% different.
+            {ok, _} = file:read_file_info("C:\\Windows\\explorer.exe"),
+            {ok, _} = file:read_file_info("\\\\localhost\\c$\\Windows\\explorer.exe"),
+
+            {ok, Files} = file:list_dir("C:\\Windows\\"),
+            {ok, Files} = file:list_dir("\\\\localhost\\c$\\Windows\\"),
+
+            {ok, Cwd} = file:get_cwd(),
+
+            try
+                ok = file:set_cwd("\\\\localhost\\c$\\Windows\\"),
+                {ok, _} = file:read_file_info("explorer.exe")
+            after
+                file:set_cwd(Cwd)
+            end,
+
+            [] = flush(),
+            ok;
+        _ ->
+            {skip, "This test is Windows-specific."}
+    end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -2102,13 +2237,14 @@ e_delete(Config) when is_list(Config) ->
     case os:type() of
 	{win32, _} ->
 	    %% Remove a character device.
-	    {error, eacces} = ?FILE_MODULE:delete("nul");
+	    expect({error, eacces}, {error, einval},
+                   ?FILE_MODULE:delete("nul"));
 	_ ->
 	    ?FILE_MODULE:write_file_info(
 	       Base, #file_info {mode=0}),
 	    {error, eacces} = ?FILE_MODULE:delete(Afile),
 	    ?FILE_MODULE:write_file_info(
-	       Base, #file_info {mode=8#600})
+	       Base, #file_info {mode=8#700})
     end,
 
     [] = flush(),
@@ -2239,7 +2375,7 @@ e_make_dir(Config) when is_list(Config) ->
 	    ?FILE_MODULE:write_file_info(Base, #file_info {mode=0}),
 	    {error, eacces} = ?FILE_MODULE:make_dir(filename:join(Base, "xxxx")),
 	    ?FILE_MODULE:write_file_info(
-	       Base, #file_info {mode=8#600})
+	       Base, #file_info {mode=8#700})
     end,
     ok.
 
@@ -2285,7 +2421,7 @@ e_del_dir(Config) when is_list(Config) ->
 	    ok = ?FILE_MODULE:make_dir(ADirectory),
 	    ?FILE_MODULE:write_file_info( Base, #file_info {mode=0}),
 	    {error, eacces} = ?FILE_MODULE:del_dir(ADirectory),
-	    ?FILE_MODULE:write_file_info( Base, #file_info {mode=8#600})
+	    ?FILE_MODULE:write_file_info( Base, #file_info {mode=8#700})
     end,
     [] = flush(),
     ok.
@@ -2641,8 +2777,8 @@ altname(Config) when is_list(Config) ->
 		{skipped, "Altname not supported on this platform"};
 	    {ok, "LONGAL~1"} -> 
 		{ok, "A_FILE~1"} = ?FILE_MODULE:altname(Name),
-		{ok, "C:/"} = ?FILE_MODULE:altname("C:/"),
-		{ok, "C:\\"} = ?FILE_MODULE:altname("C:\\"),
+		{ok, "c:/"} = ?FILE_MODULE:altname("C:/"),
+		{ok, "c:/"} = ?FILE_MODULE:altname("C:\\"),
 		{error,enoent} = ?FILE_MODULE:altname(NonexName),
 		{ok, "short"} = ?FILE_MODULE:altname(ShortName),
 		ok
@@ -2923,20 +3059,22 @@ delayed_write(Config) when is_list(Config) ->
     %%
     %% Test caching and normal close of non-raw file
     {ok, Fd1} = 
-	?FILE_MODULE:open(File, [write, {delayed_write, Size+1, 2000}]),
+	?FILE_MODULE:open(File, [write, {delayed_write, Size+1, 400}]),
     ok = ?FILE_MODULE:write(Fd1, Data1),
-    timer:sleep(1000), % Just in case the file system is slow
+    %% Wait for a reasonable amount of time to check whether the write was
+    %% practically instantaneous or actually delayed.
+    timer:sleep(100),
     {ok, Fd2} = ?FILE_MODULE:open(File, [read]),
     eof = ?FILE_MODULE:read(Fd2, 1),
     ok = ?FILE_MODULE:write(Fd1, Data1), % Data flush on size
-    timer:sleep(1000), % Just in case the file system is slow
+    timer:sleep(100),
     {ok, Data1Data1} = ?FILE_MODULE:pread(Fd2, bof, 2*Size+1),
     ok = ?FILE_MODULE:write(Fd1, Data1),
-    timer:sleep(3000), % Wait until data flush on timeout
+    timer:sleep(500), % Wait until data flush on timeout
     {ok, Data1Data1Data1} = ?FILE_MODULE:pread(Fd2, bof, 3*Size+1),
     ok = ?FILE_MODULE:write(Fd1, Data1),
     ok = ?FILE_MODULE:close(Fd1), % Data flush on close
-    timer:sleep(1000), % Just in case the file system is slow
+    timer:sleep(100),
     {ok, Data1Data1Data1Data1} = ?FILE_MODULE:pread(Fd2, bof, 4*Size+1),
     ok = ?FILE_MODULE:close(Fd2),
     %%
@@ -2970,7 +3108,7 @@ delayed_write(Config) when is_list(Config) ->
         {'DOWN', Mref1, _, _, _} = Down1a ->
             ct:fail(Down1a)
     end,
-    timer:sleep(1000), % Just in case the file system is slow
+    timer:sleep(100), % Just in case the file system is slow
     {ok, Fd3} = ?FILE_MODULE:open(File, [read]),
     eof = ?FILE_MODULE:read(Fd3, 1),
     Child1 ! {Parent, continue, normal},
@@ -2980,7 +3118,7 @@ delayed_write(Config) when is_list(Config) ->
         {'DOWN', Mref1, _, _, _} = Down1b ->
             ct:fail(Down1b)
     end,
-    timer:sleep(1000), % Just in case the file system is slow
+    timer:sleep(100), % Just in case the file system is slow
     {ok, Data1} = ?FILE_MODULE:pread(Fd3, bof, Size+1),
     ok = ?FILE_MODULE:close(Fd3),
     %%
@@ -2993,7 +3131,7 @@ delayed_write(Config) when is_list(Config) ->
         {'DOWN', Mref2, _, _, _} = Down2a ->
             ct:fail(Down2a)
     end,
-    timer:sleep(1000), % Just in case the file system is slow
+    timer:sleep(100), % Just in case the file system is slow
     {ok, Fd4} = ?FILE_MODULE:open(File, [read]),
     eof = ?FILE_MODULE:read(Fd4, 1),
     Child2 ! {Parent, continue, kill},
@@ -3003,7 +3141,7 @@ delayed_write(Config) when is_list(Config) ->
         {'DOWN', Mref2, _, _, _} = Down2b ->
             ct:fail(Down2b)
     end,
-    timer:sleep(1000), % Just in case the file system is slow
+    timer:sleep(100), % Just in case the file system is slow
     eof = ?FILE_MODULE:pread(Fd4, bof, 1),
     ok  = ?FILE_MODULE:close(Fd4),
     %%
@@ -3095,6 +3233,16 @@ read_ahead(Config) when is_list(Config) ->
     Data1Data2Data3 = Data1++Data2++Data3,
     {ok, Data1Data2Data3} = ?FILE_MODULE:read(Fd5, 3*Size+1),
     ok = ?FILE_MODULE:close(Fd5),
+
+    %% Ensure that a read that draws from both the buffer and the file won't
+    %% return anything wonky.
+    SplitData = << <<(I rem 256)>> || I <- lists:seq(1, 1024) >>,
+    file:write_file(File, SplitData),
+    {ok, Fd6} = ?FILE_MODULE:open(File, [raw, read, binary, {read_ahead, 256}]),
+    {ok, <<1>>} = file:read(Fd6, 1),
+    <<1, Shifted:512/binary, _Rest/binary>> = SplitData,
+    {ok, Shifted} = file:read(Fd6, 512),
+
     %%
     [] = flush(),
     ok.
@@ -3596,19 +3744,33 @@ otp_10852(Config) when is_list(Config) ->
     ok = rpc_call(Node, read_file, [B]),
     ok = rpc_call(Node, make_link, [B,B]),
     case rpc_call(Node, make_symlink, [B,B]) of
-	ok -> ok;
-	{error, E} when (E =:= enotsup) or (E =:= eperm) ->
-	    {win32,_} = os:type()
+        {error, eilseq} ->
+            %% Some versions of OS X refuse to create files with illegal names.
+            {unix,darwin} = os:type();
+        {error, eperm} ->
+            %% The test user might not have permission to create symlinks.
+            {win32,_} = os:type();
+        ok ->
+            ok
     end,
     ok = rpc_call(Node, delete, [B]),
-    ok = rpc_call(Node, make_dir, [B]),
+    case rpc_call(Node, make_dir, [B]) of
+        {error, eilseq} ->
+            {unix,darwin} = os:type();
+        ok ->
+            ok
+    end,
     ok = rpc_call(Node, del_dir, [B]),
-    ok = rpc_call(Node, write_file, [B,B]),
-    {ok, Fd} = rpc_call(Node, open, [B,[read]]),
-    ok = rpc_call(Node, close, [Fd]),
-    {ok,0} = rpc_call(Node, copy, [B,B]),
-    {ok, Fd2, B} = rpc_call(Node, path_open, [["."], B, [read]]),
-    ok = rpc_call(Node, close, [Fd2]),
+    case rpc_call(Node, write_file, [B,B]) of
+        {error, eilseq} ->
+            {unix,darwin} = os:type();
+        ok ->
+            {ok, Fd} = rpc_call(Node, open, [B,[read]]),
+            ok = rpc_call(Node, close, [Fd]),
+            {ok,0} = rpc_call(Node, copy, [B,B]),
+            {ok, Fd2, B} = rpc_call(Node, path_open, [["."], B, [read]]),
+            ok = rpc_call(Node, close, [Fd2])
+    end,
     true = test_server:stop_node(Node),
     ok.
 
@@ -3699,6 +3861,83 @@ do_large_write(Name) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% Benchmarks
+%%
+%% Note that we only measure the time it takes to run the isolated file
+%% operations and that the actual test runtime can differ significantly,
+%% especially on the write side as the files need to be truncated before
+%% writing.
+
+large_writes(Config) when is_list(Config) ->
+    Modes = [raw, binary],
+    OpCount = 4096,
+    Data = <<0:(64 bsl 10)/unit:8>>,
+    run_write_benchmark(Config, Modes, OpCount, Data).
+
+large_writes_delayed(Config) when is_list(Config) ->
+    %% Each write is exactly as large as the delay buffer, causing the writes
+    %% to pass through each time, giving us a decent idea of how much overhead
+    %% delayed_write adds.
+    Modes = [raw, binary, {delayed_write, 64 bsl 10, 2000}],
+    OpCount = 4096,
+    Data = <<0:(64 bsl 10)/unit:8>>,
+    run_write_benchmark(Config, Modes, OpCount, Data).
+
+tiny_writes(Config) when is_list(Config) ->
+    Modes = [raw, binary],
+    OpCount = 512 bsl 10,
+    Data = <<0>>,
+    run_write_benchmark(Config, Modes, OpCount, Data).
+
+tiny_writes_delayed(Config) when is_list(Config) ->
+    Modes = [raw, binary, {delayed_write, 512 bsl 10, 2000}],
+    OpCount = 512 bsl 10,
+    Data = <<0>>,
+    run_write_benchmark(Config, Modes, OpCount, Data).
+
+%% The read benchmarks assume that "benchmark_scratch_file" has been filled by
+%% the write benchmarks.
+
+tiny_reads(Config) when is_list(Config) ->
+    Modes = [raw, binary],
+    OpCount = 512 bsl 10,
+    run_read_benchmark(Config, Modes, OpCount, 1).
+
+tiny_reads_ahead(Config) when is_list(Config) ->
+    Modes = [raw, binary, {read_ahead, 512 bsl 10}],
+    OpCount = 512 bsl 10,
+    run_read_benchmark(Config, Modes, OpCount, 1).
+
+run_write_benchmark(Config, Modes, OpCount, Data) ->
+    run_benchmark(Config, [write | Modes], OpCount, fun file:write/2, Data).
+
+run_read_benchmark(Config, Modes, OpCount, OpSize) ->
+    run_benchmark(Config, [read | Modes], OpCount, fun file:read/2, OpSize).
+
+run_benchmark(Config, Modes, OpCount, Fun, Arg) ->
+    ScratchDir = proplists:get_value(priv_dir, Config),
+    Path = filename:join(ScratchDir, "benchmark_scratch_file"),
+    {ok, Fd} = file:open(Path, Modes),
+    submit_throughput_results(Fun, [Fd, Arg], OpCount).
+
+submit_throughput_results(Fun, Args, Times) ->
+    MSecs = measure_repeated_file_op(Fun, Args, Times, millisecond),
+    IOPS = trunc(Times * (1000 / MSecs)),
+    ct_event:notify(#event{ name = benchmark_data, data = [{value,IOPS}] }),
+    {comment, io_lib:format("~p IOPS, ~p ms", [IOPS, trunc(MSecs)])}.
+
+measure_repeated_file_op(Fun, Args, Times, Unit) ->
+    Start = os:perf_counter(Unit),
+    repeated_apply(Fun, Args, Times),
+    os:perf_counter(Unit) - Start.
+
+repeated_apply(_F, _Args, Times) when Times =< 0 ->
+    ok;
+repeated_apply(F, Args, Times) ->
+    erlang:apply(F, Args),
+    repeated_apply(F, Args, Times - 1).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
 response_analysis(Module, Function, Arguments) ->
@@ -3934,7 +4173,7 @@ read_line_create_files(TestData) ->
 read_line_remove_files(TestData) ->
     [ file:delete(File) || {_Function,File,_,_} <- TestData ].
 
-%% read_line with prim_file.
+%% read_line with ?PRIM_FILE.
 read_line_1(Config) when is_list(Config) ->
     PrivDir = proplists:get_value(priv_dir, Config),
     All = read_line_testdata(PrivDir),
@@ -4103,9 +4342,9 @@ read_line_create7(Filename) ->
     file:close(F).
 
 read_line_all(Filename) ->
-    {ok,F} = prim_file:open(Filename,[read,binary]),
+    {ok,F} = ?PRIM_FILE:open(Filename,[read,binary]),
     X=read_rl_lines(F),
-    prim_file:close(F),
+    ?PRIM_FILE:close(F),
     Bin = list_to_binary([B || {ok,B} <- X]),
     Bin = re:replace(list_to_binary([element(2,file:read_file(Filename))]),
 		     "\r\n","\n",[global,{return,binary}]),
@@ -4138,7 +4377,7 @@ read_line_all4(Filename) ->
     {length(X),Bin}.
 
 read_rl_lines(F) ->
-    case prim_file:read_line(F) of
+    case ?PRIM_FILE:read_line(F) of
 	eof ->
 	    [];
 	{error,X} ->
@@ -4158,9 +4397,9 @@ read_rl_lines2(F) ->
     end.
 
 read_line_all_alternating(Filename) ->
-    {ok,F} = prim_file:open(Filename,[read,binary]),
+    {ok,F} = ?PRIM_FILE:open(Filename,[read,binary]),
     X=read_rl_lines(F,true),
-    prim_file:close(F),
+    ?PRIM_FILE:close(F),
     Bin = list_to_binary([B || {ok,B} <- X]),
     Bin = re:replace(list_to_binary([element(2,file:read_file(Filename))]),
 		     "\r\n","\n",[global,{return,binary}]),
@@ -4194,8 +4433,8 @@ read_line_all_alternating4(Filename) ->
 read_rl_lines(F,Alternate) ->
     case begin
 	     case Alternate of
-		 true -> prim_file:read(F,1);
-		 false -> prim_file:read_line(F)
+		 true -> ?PRIM_FILE:read(F,1);
+		 false -> ?PRIM_FILE:read_line(F)
 	     end 
 	 end of
 	eof ->
@@ -4275,15 +4514,18 @@ run_large_file_test(Config, Run, Name) ->
 	{{unix,sunos},OsVersion} when OsVersion < {5,5,1} ->
 	    {skip,"Only supported on Win32, Unix or SunOS >= 5.5.1"};
 	{{unix,_},_} ->
-	    N = disc_free(proplists:get_value(priv_dir, Config)),
-	    io:format("Free disk: ~w KByte~n", [N]),
-	    if N < 5 * (1 bsl 20) ->
-		    %% Less than 5 GByte free
-		    {skip,"Less than 5 GByte free"};
-	       true ->
-		    do_run_large_file_test(Config, Run, Name)
-	    end;
-	_ -> 
+            case disc_free(proplists:get_value(priv_dir, Config)) of
+                error ->
+                    {skip, "Failed to query disk space for priv_dir. "
+                           "Is it on a remote file system?~n"};
+                N when N >= 5 * (1 bsl 20) ->
+                    ct:pal("Free disk: ~w KByte~n", [N]),
+                    do_run_large_file_test(Config, Run, Name);
+                N when N < 5 * (1 bsl 20) ->
+                    ct:pal("Free disk: ~w KByte~n", [N]),
+                    {skip,"Less than 5 GByte free"}
+            end;
+	_ ->
 	    {skip,"Only supported on Win32, Unix or SunOS >= 5.5.1"}
     end.
 
@@ -4317,12 +4559,18 @@ do_run_large_file_test(Config, Run, Name0) ->
 
 disc_free(Path) ->
     Data = disksup:get_disk_data(),
-    {_,Tot,Perc} = hd(lists:filter(
-			fun({P,_Size,_Full}) ->
-				lists:prefix(filename:nativename(P),
-					     filename:nativename(Path))
-			end, lists:reverse(lists:sort(Data)))),
-    round(Tot * (1-(Perc/100))).
+
+    %% What partitions could Data be mounted on?
+    Partitions =
+        [D || {P, _Tot, _Perc}=D <- Data,
+         lists:prefix(filename:nativename(P), filename:nativename(Path))],
+
+    %% Sorting in descending order places the partition with the most specific
+    %% path first.
+    case lists:sort(fun erlang:'>='/2, Partitions) of
+        [{_,Tot, Perc} | _] -> round(Tot * (1-(Perc/100)));
+        [] -> error
+    end.
 
 memsize() ->
     {Tot,_Used,_}  = memsup:get_memory_data(),

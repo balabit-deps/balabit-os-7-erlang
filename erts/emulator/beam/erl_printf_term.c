@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2005-2017. All Rights Reserved.
+ * Copyright Ericsson AB 2005-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -364,13 +364,13 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 	    int print_res;
 	    char def_buf[64];
 	    char *buf, *big_str;
-	    Uint sz = (Uint) big_decimal_estimate(wobj);
+	    Uint sz = (Uint) big_integer_estimate(wobj, 10);
 	    sz++;
 	    if (sz <= 64)
 		buf = &def_buf[0];
 	    else
 		buf = erts_alloc(ERTS_ALC_T_TMP, sz);
-	    big_str = erts_big_to_string(wobj, buf, sz);
+	    big_str = erts_big_to_string(wobj, 10, buf, sz);
 	    print_res = erts_printf_string(fn, arg, big_str);
 	    if (buf != &def_buf[0])
 		erts_free(ERTS_ALC_T_TMP, (void *) buf);
@@ -487,6 +487,8 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 			PRINT_UWORD(res, fn, arg, 'u', 0, 1, octet);
 			++bytep;
 			--bytesize;
+                        if ((*dcount)-- <= 0)
+                            goto L_done;
 		    }
 		    if (bitsize) {
 			Uint bits = bitoffs + bitsize;
@@ -521,6 +523,8 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 			PRINT_CHAR(res, fn, arg, octet);
 			++bytep;
 			--bytesize;
+                        if ((*dcount)-- <= 0)
+                            goto L_done;
 		    }
 		    PRINT_STRING(res, fn, arg, "\">>");
 		}
@@ -532,14 +536,13 @@ print_term(fmtfn_t fn, void* arg, Eterm obj, long *dcount) {
 		Atom* module = atom_tab(atom_val(ep->info.mfa.module));
 		Atom* name = atom_tab(atom_val(ep->info.mfa.function));
 
-		PRINT_STRING(res, fn, arg, "#Fun<");
+		PRINT_STRING(res, fn, arg, "fun ");
 		PRINT_BUF(res, fn, arg, module->name, module->len);
-		PRINT_CHAR(res, fn, arg, '.');
+		PRINT_CHAR(res, fn, arg, ':');
 		PRINT_BUF(res, fn, arg, name->name, name->len);
-		PRINT_CHAR(res, fn, arg, '.');
+		PRINT_CHAR(res, fn, arg, '/');
 		PRINT_SWORD(res, fn, arg, 'd', 0, 1,
 			    (ErlPfSWord) ep->info.mfa.arity);
-		PRINT_CHAR(res, fn, arg, '>');
 	    }
 	    break;
 	case FUN_DEF:

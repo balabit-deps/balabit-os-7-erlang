@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2016. All Rights Reserved.
+ * Copyright Ericsson AB 2016-2018. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ erts_nif_export_schedule(Process *c_p, Process *dirty_shadow_proc,
     NifExport* nep;
     int i;
 
-    ERTS_SMP_LC_ASSERT(erts_proc_lc_my_proc_locks(c_p)
+    ERTS_LC_ASSERT(erts_proc_lc_my_proc_locks(c_p)
 		       & ERTS_PROC_LOCK_MAIN);
 
     if (dirty_shadow_proc) {

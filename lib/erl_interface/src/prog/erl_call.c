@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  * 
- * Copyright Ericsson AB 1996-2017. All Rights Reserved.
+ * Copyright Ericsson AB 1996-2018. All Rights Reserved.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -88,10 +88,6 @@
 #include "ei_resolve.h"
 #include "erl_start.h"		/* FIXME remove dependency */
 
-#ifdef __WIN32__
-static void initWinSock(void);
-#endif
-
 /*
  * Some nice global variables
  * (I don't think "nice" is the right word actually... -gordon)
@@ -156,6 +152,8 @@ int erl_call(int argc, char **argv)
     struct call_flags flags = {0}; /* Default 0 and NULL in all fields */
     char* progname = argv[0];
     ei_cnode ec;
+
+    ei_init();
 
     /* Get the command line options */
     while (i < argc) {
@@ -316,14 +314,6 @@ int erl_call(int argc, char **argv)
       char *h_alivename=flags.hidden;
       struct in_addr h_ipadr;
       char* ct;
-
-#ifdef __WIN32__
-      /*
-       * FIXME Extremly ugly, but needed to get ei_gethostbyname() below
-       * to work.
-       */
-      initWinSock();
-#endif
 
       /* gethostname requires len to be max(hostname) + 1 */
       if (gethostname(h_hostname, EI_MAXHOSTNAMELEN+1) < 0) {
@@ -517,6 +507,15 @@ int erl_call(int argc, char **argv)
       }
      
     }
+
+    /*
+     * If we loaded any module source code, we can free the buffer
+     * now. This buffer was allocated in read_stdin().
+     */
+    if (module != NULL) {
+        free(module);
+    }
+
     /*
      * Eval the Erlang functions read from stdin/
      */
@@ -545,7 +544,7 @@ int erl_call(int argc, char **argv)
 
 	  /* erl_format("[~w]", erl_mk_binary(evalbuf,len))) */
 
-	  if (ei_rpc(&ec, fd, "lib", "eval_str", p, i, &reply) < 0) {
+	  if (ei_rpc(&ec, fd, "erl_eval", "eval_str", p, i, &reply) < 0) {
 	      fprintf(stderr,"erl_call: evaluating input failed: %s\n",
 		      evalbuf);
 	      free(p);
@@ -795,8 +794,6 @@ static int get_module(char **mbuf, char **mname)
     *mname = (char *) ei_chk_calloc(i+1, sizeof(char));
     memcpy(*mname, start, i);
   }
-  if (*mbuf)
-      free(*mbuf);			/* Allocated in read_stdin() */
 
   return len;
 
@@ -849,46 +846,6 @@ static void usage(const char *progname) {
   usage_noexit(progname);
   exit(0);
 }
-
-
-/***************************************************************************
- *
- *  OS specific functions
- *
- ***************************************************************************/
-
-#ifdef __WIN32__
-/*
- * FIXME This should not be here.  This is a quick fix to make erl_call
- * work at all on Windows NT.
- */
-static void initWinSock(void)
-{
-    WORD wVersionRequested;  
-    WSADATA wsaData; 
-    int err; 
-    static int initialized;
-
-    wVersionRequested = MAKEWORD(1, 1); 
-    if (!initialized) {
-	initialized = 1;
-	err = WSAStartup(wVersionRequested, &wsaData); 
- 
-	if (err != 0) {
-	    fprintf(stderr,"erl_call: "
-		    "Can't initialize windows sockets: %d\n", err);
-	}
-  
-	if ( LOBYTE( wsaData.wVersion ) != 1 || 
-	    HIBYTE( wsaData.wVersion ) != 1 ) { 
-	    fprintf(stderr,"erl_call: This version of "
-		    "windows sockets not supported\n");
-	    WSACleanup(); 
-	}
-    }
-}
-#endif
-
 
 /***************************************************************************
  *

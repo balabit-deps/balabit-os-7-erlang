@@ -1,7 +1,7 @@
 %% 
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2002-2015. All Rights Reserved.
+%% Copyright Ericsson AB 2002-2019. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@
 -export([watchdog/3, watchdog_start/1, watchdog_start/2, watchdog_stop/1]).
 -export([del_dir/1]).
 -export([cover/1]).
--export([p/2, print/5, formated_timestamp/0]).
+-export([p/2, print1/2, print2/2, print/5, formated_timestamp/0]).
 
 
 %% ----------------------------------------------------------------------
@@ -58,12 +58,67 @@ from(H, [H | T]) -> T;
 from(H, [_ | T]) -> from(H, T);
 from(_H, []) -> [].
 
+%% localhost() ->
+%%     {ok, Ip} = snmp_misc:ip(net_adm:localhost()),
+%%     Ip.
+%% localhost(Family) ->
+%%     {ok, Ip} = snmp_misc:ip(net_adm:localhost(), Family),
+%%     Ip.
+
 localhost() ->
-    {ok, Ip} = snmp_misc:ip(net_adm:localhost()),
-    Ip.
+    localhost(inet).
+
 localhost(Family) ->
-    {ok, Ip} = snmp_misc:ip(net_adm:localhost(), Family),
-    Ip.
+    case inet:getaddr(net_adm:localhost(), Family) of
+        {ok, {127, _, _, _}} when (Family =:= inet) ->
+            %% Ouch, we need to use something else
+            case inet:getifaddrs() of
+                {ok, IfList} ->
+                    which_addr(Family, IfList);
+                {error, Reason1} ->
+                    fail({getifaddrs, Reason1}, ?MODULE, ?LINE)
+            end;
+        {ok, {0, _, _, _, _, _, _, _}} when (Family =:= inet6) ->
+            %% Ouch, we need to use something else
+            case inet:getifaddrs() of
+                {ok, IfList} ->
+                    which_addr(Family, IfList);
+                {error, Reason1} ->
+                    fail({getifaddrs, Reason1}, ?MODULE, ?LINE)
+            end;
+        {ok, Addr} ->
+            Addr;
+        {error, Reason2} ->
+            fail({getaddr, Reason2}, ?MODULE, ?LINE)
+    end.
+
+which_addr(_Family, []) ->
+    fail(no_valid_addr, ?MODULE, ?LINE);
+which_addr(Family, [{"lo", _} | IfList]) ->
+    which_addr(Family, IfList);
+which_addr(Family, [{"docker" ++ _, _} | IfList]) ->
+    which_addr(Family, IfList);
+which_addr(Family, [{"br-" ++ _, _} | IfList]) ->
+    which_addr(Family, IfList);
+which_addr(Family, [{_Name, IfOpts} | IfList]) ->
+    case which_addr2(Family, IfOpts) of
+        {ok, Addr} ->
+            Addr;
+        {error, _} ->
+            which_addr(Family, IfList)
+    end.
+
+which_addr2(_Family, []) ->
+    {error, not_found};
+which_addr2(Family, [{addr, Addr}|_]) 
+  when (Family =:= inet) andalso (size(Addr) =:= 4) ->
+    {ok, Addr};
+which_addr2(Family, [{addr, Addr}|_]) 
+  when (Family =:= inet6) andalso (size(Addr) =:= 8) ->
+    {ok, Addr};
+which_addr2(Family, [_|IfOpts]) ->
+    which_addr2(Family, IfOpts).
+
 
 sz(L) when is_list(L) ->
     length(L);
@@ -605,19 +660,30 @@ p(Mod, Case) when is_atom(Mod) andalso is_atom(Case) ->
 p(F, A) when is_list(F) andalso is_list(A) ->
     io:format(user, F ++ "~n", A).
 
+%% This is just a bog standard printout, with a (formatted) timestamp
+%% prefix and a newline after.
+%% print1 - prints to both standard_io and user.
+%% print2 - prints to just standard_io.
+
+print_format(F, A) ->
+    FTS = snmp_test_lib:formated_timestamp(),
+    io_lib:format("[~s] " ++ F ++ "~n", [FTS | A]).
+
+print1(F, A) ->
+    S = print_format(F, A),
+    io:format("~s", [S]),
+    io:format(user, "~s", [S]).
+
+print2(F, A) ->
+    S = print_format(F, A),
+    io:format("~s", [S]).
+
+
 print(Prefix, Module, Line, Format, Args) ->
     io:format("*** [~s] ~s ~p ~p ~p:~p *** " ++ Format ++ "~n", 
 	      [formated_timestamp(), 
 	       Prefix, node(), self(), Module, Line|Args]).
 
 formated_timestamp() ->
-    format_timestamp(os:timestamp()).
+    snmp_misc:formated_timestamp().
 
-format_timestamp({_N1, _N2, N3} = Now) ->
-    {Date, Time}   = calendar:now_to_datetime(Now),
-    {YYYY,MM,DD}   = Date,
-    {Hour,Min,Sec} = Time,
-    FormatDate =
-        io_lib:format("~.4w:~.2.0w:~.2.0w ~.2.0w:~.2.0w:~.2.0w ~w",
-                      [YYYY,MM,DD,Hour,Min,Sec,round(N3/1000)]),
-    lists:flatten(FormatDate).

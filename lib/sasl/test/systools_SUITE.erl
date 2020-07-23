@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2012-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2012-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ groups() ->
        otp_3065_circular_dependenies, included_and_used_sort_script]},
      {tar, [],
       [tar_options, normal_tar, no_mod_vsn_tar, system_files_tar,
-       invalid_system_files_tar, variable_tar,
+       system_src_file_tar, invalid_system_files_tar, variable_tar,
        src_tests_tar, var_tar, exref_tar, link_tar, no_sasl_tar,
        otp_9507_path_ebin]},
      {relup, [],
@@ -945,12 +945,47 @@ system_files_tar(Config) ->
 
     ok.
 
+
 system_files_tar(cleanup,Config) ->
     Dir = ?privdir,
     file:delete(filename:join(Dir,"sys.config")),
     file:delete(filename:join(Dir,"relup")),
     ok.
 
+%% make_tar: Check that sys.config.src and not sys.config is included
+system_src_file_tar(Config) ->
+    {ok, OldDir} = file:get_cwd(),
+
+    {LatestDir, LatestName} = create_script(latest,Config),
+
+    DataDir = filename:absname(?copydir),
+    LibDir = fname([DataDir, d_normal, lib]),
+    P = [fname([LibDir, 'db-2.1', ebin]),
+         fname([LibDir, 'fe-3.1', ebin])],
+
+    ok = file:set_cwd(LatestDir),
+
+    %% Add dummy sys.config and sys.config.src
+    ok = file:write_file("sys.config.src","[${SOMETHING}].\n"),
+    ok = file:write_file("sys.config","[].\n"),
+
+    {ok, _, _} = systools:make_script(LatestName, [silent, {path, P}]),
+    ok = systools:make_tar(LatestName, [{path, P}]),
+    ok = check_tar(fname(["releases","LATEST","sys.config.src"]), LatestName),
+    {error, _} = check_tar(fname(["releases","LATEST","sys.config"]), LatestName),
+    {ok, _, _} = systools:make_tar(LatestName, [{path, P}, silent]),
+    ok = check_tar(fname(["releases","LATEST","sys.config.src"]), LatestName),
+    {error, _} = check_tar(fname(["releases","LATEST","sys.config"]), LatestName),
+
+    ok = file:set_cwd(OldDir),
+
+    ok.
+
+system_src_file_tar(cleanup,Config) ->
+    Dir = ?privdir,
+    file:delete(filename:join(Dir,"sys.config")),
+    file:delete(filename:join(Dir,"sys.config.src")),
+    ok.
 
 %% make_tar: Check that make_tar fails if relup or sys.config exist
 %% but do not have valid content
@@ -1619,7 +1654,7 @@ abnormal_relup(Config) when is_list(Config) ->
     ok.
 
 
-%% make_relup: Check relup can not be created is sasl is not in rel file.
+%% make_relup: Check relup cannot be created is sasl is not in rel file.
 no_sasl_relup(Config) when is_list(Config) ->
     {ok, OldDir} = file:get_cwd(),
     {Dir1,Name1} = create_script(latest1_no_sasl,Config),
@@ -1760,27 +1795,28 @@ normal_hybrid(Config) ->
 
     ok = file:set_cwd(OldDir),
 
-    BasePaths = {"testkernelpath","teststdlibpath","testsaslpath"},
     {ok,Hybrid} = systools_make:make_hybrid_boot("tmp_vsn",Boot1,Boot2,
-						 BasePaths, [dummy,args]),
+                                                 [dummy,args]),
 
     {script,{"Test release","tmp_vsn"},Script} = binary_to_term(Hybrid),
     ct:log("~p.~n",[Script]),
 
     %% Check that all paths to base apps are replaced by paths from BaseLib
     Boot1Str = io_lib:format("~p~n",[binary_to_term(Boot1)]),
+    Boot2Str = io_lib:format("~p~n",[binary_to_term(Boot2)]),
     HybridStr = io_lib:format("~p~n",[binary_to_term(Hybrid)]),
     ReOpts = [global,{capture,first,list},unicode],
     {match,OldKernelMatch} = re:run(Boot1Str,"kernel-[0-9\.]+",ReOpts),
     {match,OldStdlibMatch} = re:run(Boot1Str,"stdlib-[0-9\.]+",ReOpts),
     {match,OldSaslMatch} = re:run(Boot1Str,"sasl-[0-9\.]+",ReOpts),
 
-    nomatch = re:run(HybridStr,"kernel-[0-9\.]+",ReOpts),
-    nomatch = re:run(HybridStr,"stdlib-[0-9\.]+",ReOpts),
-    nomatch = re:run(HybridStr,"sasl-[0-9\.]+",ReOpts),
-    {match,NewKernelMatch} = re:run(HybridStr,"testkernelpath",ReOpts),
-    {match,NewStdlibMatch} = re:run(HybridStr,"teststdlibpath",ReOpts),
-    {match,NewSaslMatch} = re:run(HybridStr,"testsaslpath",ReOpts),
+    {match,NewKernelMatch} = re:run(Boot2Str,"kernel-[0-9\.]+",ReOpts),
+    {match,NewStdlibMatch} = re:run(Boot2Str,"stdlib-[0-9\.]+",ReOpts),
+    {match,NewSaslMatch} = re:run(Boot2Str,"sasl-[0-9\.]+",ReOpts),
+
+    {match,NewKernelMatch} = re:run(HybridStr,"kernel-[0-9\.]+",ReOpts),
+    {match,NewStdlibMatch} = re:run(HybridStr,"stdlib-[0-9\.]+",ReOpts),
+    {match,NewSaslMatch} = re:run(HybridStr,"sasl-[0-9\.]+",ReOpts),
 
     NewKernelN = length(NewKernelMatch),
     NewKernelN = length(OldKernelMatch),
@@ -1788,6 +1824,11 @@ normal_hybrid(Config) ->
     NewStdlibN = length(OldStdlibMatch),
     NewSaslN = length(NewSaslMatch),
     NewSaslN = length(OldSaslMatch),
+
+    %% Check that kernelProcesses are taken from new boot script
+    {script,_,Script2} = binary_to_term(Boot2),
+    NewKernelProcs = [KP || KP={kernelProcess,_,_} <- Script2],
+    NewKernelProcs = [KP || KP={kernelProcess,_,_} <- Script],
 
     %% Check that application load instruction has correct versions
     Apps = application:loaded_applications(),
@@ -1859,10 +1900,8 @@ hybrid_no_old_sasl(Config) ->
     {ok,Boot1} = file:read_file(Name1 ++ ".boot"),
     {ok,Boot2} = file:read_file(Name2 ++ ".boot"),
 
-    BasePaths = {"testkernelpath","teststdlibpath","testsaslpath"},
     {error,{app_not_replaced,sasl}} =
-	systools_make:make_hybrid_boot("tmp_vsn",Boot1,Boot2,
-				       BasePaths,[dummy,args]),
+	systools_make:make_hybrid_boot("tmp_vsn",Boot1,Boot2,[dummy,args]),
 
     ok = file:set_cwd(OldDir),
     ok.
@@ -1892,10 +1931,8 @@ hybrid_no_new_sasl(Config) ->
     {ok,Boot1} = file:read_file(Name1 ++ ".boot"),
     {ok,Boot2} = file:read_file(Name2 ++ ".boot"),
 
-    BasePaths = {"testkernelpath","teststdlibpath","testsaslpath"},
     {error,{app_not_found,sasl}} =
-	systools_make:make_hybrid_boot("tmp_vsn",Boot1,Boot2,
-				       BasePaths,[dummy,args]),
+	systools_make:make_hybrid_boot("tmp_vsn",Boot1,Boot2,[dummy,args]),
 
     ok = file:set_cwd(OldDir),
     ok.

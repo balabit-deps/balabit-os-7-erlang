@@ -418,6 +418,11 @@ traverse(Tree, DefinedVars, State) ->
 	match_fail -> throw(error);
 	raise -> throw(error);
 	bs_init_writable -> {State, t_from_term(<<>>)};
+	build_stacktrace ->
+          V = mk_var(Tree),
+          Type = erl_bif_types:type(erlang, build_stacktrace, 0),
+          State1 = state__store_conj(V, sub, Type, State),
+          {State1, V};
 	Other -> erlang:error({'Unsupported primop', Other})
       end;
     'receive' ->
@@ -1895,9 +1900,8 @@ solver(Solver, SolveFun) ->
       ?debug("Solver ~w returned unexpected result:\n  ~P\n",
              [Solver, _R, 60]),
       throw(error)
-  catch E:R ->
-      io:format("Solver ~w failed: ~w:~p\n ~tp\n",
-                [Solver, E, R, erlang:get_stacktrace()]),
+  catch E:R:S ->
+      io:format("Solver ~w failed: ~w:~p\n ~tp\n", [Solver, E, R, S]),
       throw(error)
   end.
 

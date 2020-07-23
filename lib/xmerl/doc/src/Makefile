@@ -1,7 +1,7 @@
 #
 # %CopyrightBegin%
 #
-# Copyright Ericsson AB 2004-2017. All Rights Reserved.
+# Copyright Ericsson AB 2004-2018. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,10 +54,9 @@ XMERL_MODULES = \
 
 
 XML_APPLICATION_FILES = ref_man.xml
-XMERL_XML_FILES = $(XMERL_MODULES:=.xml)
+XMERL_XML_FILES = $(XMERL_MODULES:%=$(XMLDIR)/%.xml)
 
-XML_REF3_FILES = $(XMERL_XML_FILES) \
-	xmerl_sax_parser.xml
+XML_REF3_FILES = xmerl_sax_parser.xml
 
 XML_PART_FILES = \
 	part.xml
@@ -65,9 +64,10 @@ XML_PART_FILES = \
 XML_REF6_FILES =
 
 XML_CHAPTER_FILES =  \
-	xmerl_ug.xml \
 	notes.xml
 
+XML_CHAPTER_GEN_FILES = \
+	$(XMLDIR)/xmerl_ug.xml
 
 HTML_EXAMPLE_FILES =  \
 	xmerl_examples.html \
@@ -89,6 +89,8 @@ XML_FILES= \
 	$(BOOK_FILES) $(XML_CHAPTER_FILES) \
 	$(XML_PART_FILES) $(XML_REF3_FILES) $(XML_APPLICATION_FILES)
 
+XML_GEN_FILES = $(XMERL_XML_FILES) $(XML_CHAPTER_GEN_FILES)
+
 # ----------------------------------------------------
 INFO_FILE = ../../info
 
@@ -97,7 +99,7 @@ HTML_FILES = $(XML_REF_MAN:%.xml=$(HTMLDIR)/%.html) \
 	$(XML_PART_FILES:%.xml=$(HTMLDIR)/%.html)
 
 
-MAN3_FILES = $(XML_REF3_FILES:%.xml=$(MAN3DIR)/%.3)
+MAN3_FILES = $(XML_REF3_FILES:%.xml=$(MAN3DIR)/%.3) $(XMERL_MODULES:%=$(MAN3DIR)/%.3)
 MAN6_FILES = $(XML_REF6_FILES:%_app.xml=$(MAN6DIR)/%.6)
 
 HTML_REF_MAN_FILE = $(HTMLDIR)/index.html
@@ -126,7 +128,7 @@ pdf: $(TOP_PDF_FILE)
 html: gifs $(HTML_REF_MAN_FILE)
 
 $(XMERL_XML_FILES):
-	escript $(DOCGEN)/priv/bin/xml_from_edoc.escript $(XMERL_DIR)/$(@:%.xml=%.erl)
+	$(gen_verbose)escript $(DOCGEN)/priv/bin/xml_from_edoc.escript -dir $(XMLDIR) $(XMERL_DIR)/$(@:$(XMLDIR)/%.xml=%.erl)
 
 man: $(MAN3_FILES) $(MAN6_FILES)
 
@@ -138,6 +140,7 @@ debug opt:
 
 clean clean_docs:
 	rm -rf $(HTMLDIR)/*
+	rm -rf $(XMLDIR)
 	rm -f $(MAN3DIR)/*
 	rm -f $(MAN6DIR)/*
 	rm -f $(XMERL_XML_FILES)

@@ -2,7 +2,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -292,8 +292,7 @@ run_passes_1([{pass,Name,Pass}|Passes], #st{run=Run}=St0)
 	done ->
 	    ok
     catch
-	Class:Error ->
-	    Stk = erlang:get_stacktrace(),
+	Class:Error:Stk ->
 	    io:format("Internal error: ~p:~p\n~p\n",
 		      [Class,Error,Stk]),
 	    {error,{internal_error,{Class,Error}}}
@@ -2390,13 +2389,13 @@ in_process(Fun) ->
     receive
         {Pid, Result}               -> Result;
         {Pid, Class, Reason, Stack} ->
-            ST = try throw(x) catch throw:x -> erlang:get_stacktrace() end,
+            ST = try throw(x) catch throw:x:Stk -> Stk end,
             erlang:raise(Class, Reason, Stack ++ ST)
     end.
 
 process(Parent, Fun) ->
     try
         Parent ! {self(), Fun()}
-    catch Class:Reason ->
-        Parent ! {self(), Class, Reason, erlang:get_stacktrace()}
+    catch Class:Reason:Stack ->
+        Parent ! {self(), Class, Reason, Stack}
     end.

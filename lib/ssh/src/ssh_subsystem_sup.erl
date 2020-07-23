@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2008-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2008-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ connection_supervisor(SupPid) ->
 
 channel_supervisor(SupPid) ->    
     Children = supervisor:which_children(SupPid),
-    ssh_channel_sup(Children).
+    ssh_server_channel_sup(Children).
 
 %%%=========================================================================
 %%%  Supervisor callback
@@ -74,18 +74,14 @@ ssh_connection_child_spec(Role, Address, Port, _Profile, Options) ->
     #{id       => id(Role, ssh_connection_sup, Address, Port),
       start    => {ssh_connection_sup, start_link, [Options]},
       restart  => temporary,
-      shutdown => 5000,
-      type     => supervisor,
-      modules  => [ssh_connection_sup]
+      type     => supervisor
      }.
 
 ssh_channel_child_spec(Role, Address, Port, _Profile, Options) ->
-    #{id       => id(Role, ssh_channel_sup, Address, Port),
-      start    => {ssh_channel_sup, start_link, [Options]},
+    #{id       => id(Role, ssh_server_channel_sup, Address, Port),
+      start    => {ssh_server_channel_sup, start_link, [Options]},
       restart  => temporary,
-      shutdown => infinity,
-      type     => supervisor,
-      modules  => [ssh_channel_sup]
+      type     => supervisor
      }.
 
 id(Role, Sup, Address, Port) ->
@@ -96,10 +92,10 @@ ssh_connection_sup([{_, Child, _, [ssh_connection_sup]} | _]) ->
 ssh_connection_sup([_ | Rest]) ->
     ssh_connection_sup(Rest).
 
-ssh_channel_sup([{_, Child, _, [ssh_channel_sup]} | _]) ->
+ssh_server_channel_sup([{_, Child, _, [ssh_server_channel_sup]} | _]) ->
     Child;
-ssh_channel_sup([_ | Rest]) ->
-    ssh_channel_sup(Rest).
+ssh_server_channel_sup([_ | Rest]) ->
+    ssh_server_channel_sup(Rest).
 
 
 

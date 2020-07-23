@@ -28,7 +28,8 @@
 -define(NAME, user).
 
 %% Defines for control ops
--define(CTRL_OP_GET_WINSIZE,100).
+-define(ERTS_TTYSL_DRV_CONTROL_MAGIC_NUMBER, 16#018b0900).
+-define(CTRL_OP_GET_WINSIZE, (100 + ?ERTS_TTYSL_DRV_CONTROL_MAGIC_NUMBER)).
 
 %%
 %% The basic server and start-up.
@@ -295,7 +296,8 @@ io_requests([], Stat, _) ->
 %%  port.
 
 put_port(List, Port) ->
-    send_port(Port, {command, List}).
+    true = port_command(Port, List),
+    ok.
 
 %% send_port(Port, Command)
 

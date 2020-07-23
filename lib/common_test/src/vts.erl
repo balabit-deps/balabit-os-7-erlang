@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 2003-2017. All Rights Reserved.
+%% Copyright Ericsson AB 2003-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -919,7 +919,7 @@ get_input_data(Input,Key)->
     end.
 
 parse(Input) ->
-    httpd:parse_query(Input).
+    uri_string:dissect_query(Input).
 
 vts_integer_to_list(X) when is_atom(X) ->
     atom_to_list(X);

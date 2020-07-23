@@ -35,6 +35,14 @@
   <lib>erl_marshal</lib>
   <libsummary>Encoding and decoding of Erlang terms.</libsummary>
   <description>
+    <note><p>The support for VxWorks is deprecated as of OTP 22, and
+    will be removed in OTP 23.</p></note>
+    <note><p>The old legacy <c>erl_interface</c> library (functions
+    with prefix <c>erl_</c>) is deprecated as of OTP 22, and will be
+    removed in OTP 23. This does not apply to the <c>ei</c>
+    library. Reasonably new <c>gcc</c> compilers will issue deprecation
+    warnings. In order to disable these warnings, define the macro
+    <c>EI_NO_DEPR_WARN</c>.</p></note>
     <p>This module contains functions for encoding Erlang terms into
       a sequence of bytes, and for decoding Erlang terms from a
       sequence of bytes.</p>
@@ -42,7 +50,7 @@
 
   <funcs>
     <func>
-      <name><ret>int</ret><nametext>erl_compare_ext(bufp1, bufp2)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_compare_ext(bufp1, bufp2)</nametext></name>
       <fsummary>Compare encoded byte sequences.</fsummary>
       <type>
         <v>unsigned char *bufp1,*bufp2;</v>
@@ -62,8 +70,8 @@
     </func>
 
     <func>
-      <name><ret>ETERM *</ret><nametext>erl_decode(bufp)</nametext></name>
-      <name><ret>ETERM *</ret><nametext>erl_decode_buf(bufpp)</nametext></name>
+      <name since=""><ret>ETERM *</ret><nametext>erl_decode(bufp)</nametext></name>
+      <name since=""><ret>ETERM *</ret><nametext>erl_decode_buf(bufpp)</nametext></name>
       <fsummary>Convert a term from Erlang external format.</fsummary>
       <type>
         <v>unsigned char *bufp;</v>
@@ -102,8 +110,8 @@
     </func>
 
     <func>
-      <name><ret>int</ret><nametext>erl_encode(term, bufp)</nametext></name>
-      <name><ret>int</ret><nametext>erl_encode_buf(term, bufpp)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_encode(term, bufp)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_encode_buf(term, bufpp)</nametext></name>
       <fsummary>Convert a term into Erlang external format.</fsummary>
       <type>
         <v>ETERM *term;</v>
@@ -179,7 +187,7 @@
     </func>
 
     <func>
-      <name><ret>int</ret><nametext>erl_ext_size(bufp)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_ext_size(bufp)</nametext></name>
       <fsummary>Count elements in encoded term.</fsummary>
       <type>
         <v>unsigned char *bufp;</v>
@@ -190,7 +198,7 @@
     </func>
 
     <func>
-      <name><ret>unsigned char</ret><nametext>erl_ext_type(bufp)</nametext></name>
+      <name since=""><ret>unsigned char</ret><nametext>erl_ext_type(bufp)</nametext></name>
       <fsummary>Determine type of an encoded byte sequence.</fsummary>
       <type>
         <v>unsigned char *bufp;</v>
@@ -228,7 +236,7 @@
     </func>
 
     <func>
-      <name><ret>unsigned char *</ret><nametext>erl_peek_ext(bufp, pos)</nametext></name>
+      <name since=""><ret>unsigned char *</ret><nametext>erl_peek_ext(bufp, pos)</nametext></name>
       <fsummary>Step over encoded term.</fsummary>
       <type>
         <v>unsigned char *bufp;</v>
@@ -252,7 +260,7 @@
     </func>
 
     <func>
-      <name><ret>int</ret><nametext>erl_term_len(t)</nametext></name>
+      <name since=""><ret>int</ret><nametext>erl_term_len(t)</nametext></name>
       <fsummary>Determine encoded size of term.</fsummary>
       <type>
         <v>ETERM *t;</v>

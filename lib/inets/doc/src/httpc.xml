@@ -4,7 +4,7 @@
 <erlref>
   <header>
     <copyright>
-      <year>2004</year><year>2017</year>
+      <year>2004</year><year>2018</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
     <legalnotice>
@@ -30,7 +30,7 @@
     <rev></rev>
   </header>
 
-  <module>httpc</module>
+  <module since="OTP R13B04">httpc</module>
   <modulesummary>An HTTP/1.1 client</modulesummary>
 
   <description>
@@ -151,8 +151,8 @@
   <funcs>
    
     <func>
-      <name>cancel_request(RequestId) -></name>
-      <name>cancel_request(RequestId, Profile) -> ok</name>
+      <name since="OTP R13B04">cancel_request(RequestId) -></name>
+      <name since="OTP R13B04">cancel_request(RequestId, Profile) -> ok</name>
       <fsummary>Cancels an asynchronous HTTP request.</fsummary>
       <type>
         <v>RequestId = request_id() - A unique identifier as returned
@@ -169,9 +169,9 @@
     </func>
 
     <func>
-      <name>cookie_header(Url) -> </name>
-      <name>cookie_header(Url, Profile | Opts) -> header() | {error, Reason}</name>
-      <name>cookie_header(Url, Opts, Profile) -> header() | {error, Reason}</name>
+      <name since="OTP R13B04">cookie_header(Url) -> </name>
+      <name since="OTP R13B04">cookie_header(Url, Profile | Opts) -> header() | {error, Reason}</name>
+      <name since="OTP R15B">cookie_header(Url, Opts, Profile) -> header() | {error, Reason}</name>
       <fsummary>Returns the cookie header that would have been sent when
       making a request to URL using the profile <c>Profile</c>.</fsummary>
       <type>
@@ -193,8 +193,8 @@
     </func>
 
      <func>
-      <name>get_options(OptionItems) -> {ok, Values} | {error, Reason}</name>
-      <name>get_options(OptionItems, Profile) -> {ok, Values} | {error, Reason}</name>
+      <name since="OTP R15B01">get_options(OptionItems) -> {ok, Values} | {error, Reason}</name>
+      <name since="OTP R15B01">get_options(OptionItems, Profile) -> {ok, Values} | {error, Reason}</name>
       <fsummary>Gets the currently used options.</fsummary>
       <type>
         <v>OptionItems = all | [option_item()]</v>
@@ -210,7 +210,8 @@
 			   ip | 
 			   port | 
 			   socket_opts | 
-	                   verbose</v>
+	                   verbose |
+	                   unix_socket</v>
 	<v>Profile = profile() | pid()</v>
 	<d>When started <c>stand_alone</c> only the pid can used.</d>
         <v>Values = [{option_item(), term()}]</v>
@@ -222,8 +223,8 @@
     </func>
 
     <func>
-      <name>info() -> list()</name>
-      <name>info(Profile) -> list()</name>
+      <name since="OTP R15B02">info() -> list()</name>
+      <name since="OTP R15B02">info(Profile) -> list()</name>
       <fsummary>Produces a list of miscellaneous information.</fsummary>
       <type>
 	<v>Profile = profile() | pid()</v>
@@ -238,8 +239,8 @@
 
     
     <func>
-      <name>reset_cookies() -> void()</name>
-      <name>reset_cookies(Profile) -> void()</name>
+      <name since="OTP R13B04">reset_cookies() -> void()</name>
+      <name since="OTP R13B04">reset_cookies(Profile) -> void()</name>
       <fsummary>Resets the cookie database.</fsummary>
       <type>
 	<v>Profile = profile() | pid()</v>
@@ -253,8 +254,8 @@
     </func>
     
     <func>
-      <name>request(Url) -> </name>
-      <name>request(Url, Profile) -> {ok, Result} | {error, Reason}</name>
+      <name since="OTP R13B04">request(Url) -> </name>
+      <name since="OTP R13B04">request(Url, Profile) -> {ok, Result} | {error, Reason}</name>
       <fsummary>Sends a get HTTP request.</fsummary>
       <type>
         <v>Url = url()</v> 
@@ -271,8 +272,8 @@
     </func>
 
     <func>
-      <name>request(Method, Request, HTTPOptions, Options) -></name>
-      <name>request(Method, Request, HTTPOptions, Options, Profile) -> {ok, Result} | {ok, saved_to_file} | {error, Reason}</name>
+      <name since="OTP R13B04">request(Method, Request, HTTPOptions, Options) -></name>
+      <name since="OTP R13B04">request(Method, Request, HTTPOptions, Options, Profile) -> {ok, Result} | {ok, saved_to_file} | {error, Reason}</name>
       
       <fsummary>Sends an HTTP request.</fsummary>
       <type>
@@ -287,8 +288,7 @@
                            {autoredirect,    boolean()} | 
                            {proxy_auth, {userstring(), passwordstring()}} | 
                            {version,         http_version()} | 
-                           {relaxed,         boolean()} |
-	                   {url_encode,      boolean()}</v>
+                           {relaxed,         boolean()}</v>
         <v>timeout() = integer() >= 0 | infinity</v>
         <v>Options = options()</v>
         <v>options() = [option()]</v>
@@ -298,8 +298,8 @@
                       {full_result,             boolean()} | 
                       {headers_as_is,           boolean() |
                       {socket_opts,             socket_opts()} | 
-                      {receiver,                receiver()},
-	              {ipv6_host_with_brackets, boolean()}}</v>
+                      {receiver,                receiver()} |
+	              {ipv6_host_with_brackets, boolean()}</v>
         <v>stream_to() = none | self | {self, once} | filename()</v>
         <v>socket_opts() = [socket_opt()]</v>
         <v>receiver() = pid() | function()/1 | {Module, Function, Args}</v>
@@ -312,8 +312,7 @@
         <v>Body = string() | binary()</v>
         <v>Profile = profile() | pid()</v>
 	<d>When started <c>stand_alone</c> only the pid can be used.</d>
-        <v>Reason = {connect_failed, term()} | 
-                    {send_failed, term()} | term()</v>
+        <v>Reason = term()</v>
       </type>
 
       <desc>
@@ -379,13 +378,6 @@
 	    from the HTTP-standard are enabled.</p>
             <p>Default is <c>false</c>.</p>
 	  </item>
-
-	  <tag><c><![CDATA[url_encode]]></c></tag>
-          <item>
-            <p>Applies Percent-encoding, also known as URL encoding on the 
-	    URL.</p>
-	    <p>Default is <c>false</c>.</p>
-	  </item>
         </taglist>
 
         <p>Option (<c>option()</c>) details:</p>
@@ -449,17 +441,22 @@
 
           <tag><c><![CDATA[socket_opts]]></c></tag>
           <item>
-            <p>Socket options to be used for this and subsequent 
-	    requests.</p>
+            <p>Socket options to be used for this request.</p>
 	    <p>Overrides any value set by function
 	    <seealso marker="#set_options-1">set_options</seealso>.</p>
             <p>The validity of the options is <em>not</em> checked by
             the HTTP client they are assumed to be correct and passed
             on to ssl application and inet driver, which may reject
-            them if they are not correct. Note that the current
-            implementation assumes the requests to the same host, port
-            combination will use the same socket options.
+            them if they are not correct.
 	    </p>
+	    <note>
+	      <p>
+		Persistent connections are not supported when setting the
+		<c>socket_opts</c> option. When <c>socket_opts</c> is not
+		set the current implementation assumes the requests to the
+		same host, port combination will use the same socket options.
+	      </p>
+	    </note>
 	    
             <p>By default the socket options set by function
 	    <seealso marker="#set_options-1">set_options/[1,2]</seealso> 
@@ -524,8 +521,8 @@
 
   
     <func>
-      <name>set_options(Options) -> </name>
-      <name>set_options(Options, Profile) -> ok | {error, Reason}</name>
+      <name since="OTP R13B04">set_options(Options) -> </name>
+      <name since="OTP R13B04">set_options(Options, Profile) -> ok | {error, Reason}</name>
       <fsummary>Sets options to be used for subsequent requests.</fsummary>
       <type>
         <v>Options = [Option]</v>
@@ -541,7 +538,8 @@
 	<v>| {ip, IpAddress}</v>
 	<v>| {port, Port}</v>
 	<v>| {socket_opts, socket_opts()}</v>
-	<v>| {verbose, VerboseMode}</v>	    
+	<v>| {verbose, VerboseMode}</v>
+	<v>| {unix_socket, UnixSocket}</v>
         <v>Proxy = {Hostname, Port}</v>
         <v>Hostname = string()</v>
         <d>Example: "localhost" or "foo.bar.se"</d>
@@ -584,7 +582,7 @@
 	If option <c>verify</c> is used, function <c>store_cookies/2</c>
 	has to be called for the cookies to be saved. 
 	Default is <c>disabled</c>.</d>
-	<v>IpFamily = inet | inet6 </v>
+	<v>IpFamily = inet | inet6 | local</v>
 	<d>Default is <c>inet</c>.</d>
 	<v>IpAddress = ip_address()</v>
 	<d>If the host has several network interfaces, this option specifies 
@@ -609,6 +607,12 @@
 	It is a debug feature.</d>
 	<v>Profile = profile() | pid()</v>
 	<d>When started <c>stand_alone</c> only the pid can be used.</d>
+	<v>UnixSocket = path()</v>
+	<d>
+	  Experimental option for sending HTTP requests over a unix domain socket. The value
+	  of <c>unix_socket</c> shall be the full path to a unix domain socket file with read/write
+	  permissions for the erlang process. Default is <c>undefined</c>.
+	</d>
       </type>
       <desc>
 	<p>Sets options to be used for subsequent requests.</p>
@@ -625,15 +629,18 @@
 	  to complete. The HTTP/1.1 specification suggests a
 	  limit of two persistent connections per server, which is the
 	  default value of option <c>max_sessions</c>.</p>
+	  <p>
+            The current implementation assumes the requests to the same host, port
+            combination will use the same socket options.
+	  </p>
 	</note>
-
         <marker id="get_options"></marker>
       </desc>
     </func>
      
     <func>
-      <name>store_cookies(SetCookieHeaders, Url) -> </name>
-      <name>store_cookies(SetCookieHeaders, Url, Profile) -> ok | {error, Reason}</name>
+      <name since="OTP R14B02">store_cookies(SetCookieHeaders, Url) -> </name>
+      <name since="OTP R14B02">store_cookies(SetCookieHeaders, Url, Profile) -> ok | {error, Reason}</name>
       <fsummary>Saves the cookies defined in <c>SetCookieHeaders</c> in the 
       client profile cookie database.</fsummary>
       <type>
@@ -651,7 +658,7 @@
     </func>
 
     <func>
-      <name>stream_next(Pid) -> ok</name>
+      <name since="OTP R13B04">stream_next(Pid) -> ok</name>
       <fsummary>Triggers the next message to be streamed, that is,
 	the same behavior as active one for sockets.
       </fsummary>
@@ -669,8 +676,8 @@
     </func>
     
     <func>
-      <name>which_cookies() -> cookies()</name>
-      <name>which_cookies(Profile) -> cookies()</name>
+      <name since="OTP R13B04">which_cookies() -> cookies()</name>
+      <name since="OTP R13B04">which_cookies(Profile) -> cookies()</name>
       <fsummary>Dumps the entire cookie database.</fsummary>
       <type>
 	<v>Profile = profile() | pid()</v>
@@ -688,8 +695,8 @@
     </func>
 
     <func>
-      <name>which_sessions() -> session_info()</name>
-      <name>which_sessions(Profile) -> session_info()</name>
+      <name since="OTP R15B02">which_sessions() -> session_info()</name>
+      <name since="OTP R15B02">which_sessions(Profile) -> session_info()</name>
       <fsummary>Produces a slightly processed dump of the sessions database.</fsummary>
       <type>
 	<v>Profile = profile() | pid()</v>

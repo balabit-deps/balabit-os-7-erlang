@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1997-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1997-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -118,6 +118,7 @@ t_float(Config) when is_list(Config) ->
 %% Tests float_to_list/1, float_to_list/2, float_to_binary/1, float_to_binary/2
 
 t_float_to_string(Config) when is_list(Config) ->
+    rand_seed(),
     test_fts("0.00000000000000000000e+00", 0.0),
     test_fts("2.50000000000000000000e+01", 25.0),
     test_fts("2.50000000000000000000e+00", 2.5),
@@ -145,7 +146,7 @@ t_float_to_string(Config) when is_list(Config) ->
 				     123456789012345678.0, [{decimals, 237}])),
     {'EXIT', {badarg, _}} = (catch float_to_binary(
 				     123456789012345678.0, [{decimals, 237}])),
-    test_fts("1." ++ string:copies("0", 249) ++ "e+00",
+    test_fts("1." ++ lists:duplicate(249, $0) ++ "e+00",
 	     1.0,  [{scientific, 249}, compact]),
 
     X1 = float_to_list(1.0),
@@ -160,6 +161,7 @@ t_float_to_string(Config) when is_list(Config) ->
     test_fts("1.000",1.0,   [{decimals,   3}]),
     test_fts("1.0",1.0, [{decimals, 1}]),
     test_fts("1.0",1.0, [{decimals, 3}, compact]),
+    test_fts("10",10.0, [{decimals, 0}, compact]),
     test_fts("1.12",1.123, [{decimals, 2}]),
     test_fts("1.123",1.123, [{decimals, 3}]),
     test_fts("1.123",1.123, [{decimals, 3}, compact]),
@@ -167,8 +169,8 @@ t_float_to_string(Config) when is_list(Config) ->
     test_fts("1.12300",1.123, [{decimals, 5}]),
     test_fts("1.123",1.123, [{decimals, 5}, compact]),
     test_fts("1.1234",1.1234,[{decimals, 6}, compact]),
-    test_fts("1.01",1.005, [{decimals, 2}]),
-    test_fts("-1.01",-1.005,[{decimals, 2}]),
+    test_fts("1.00",1.005, [{decimals, 2}]),  %% 1.005 is really 1.0049999999...
+    test_fts("-1.00",-1.005,[{decimals, 2}]),
     test_fts("0.999",0.999, [{decimals, 3}]),
     test_fts("-0.999",-0.999,[{decimals, 3}]),
     test_fts("1.0",0.999, [{decimals, 2}, compact]),
@@ -184,6 +186,9 @@ t_float_to_string(Config) when is_list(Config) ->
     test_fts("123000000000000000000.0",1.23e20, [{decimals,   10}, compact]),
     test_fts("1.2300000000e+20",1.23e20, [{scientific, 10}, compact]),
     test_fts("1.23000000000000000000e+20",1.23e20, []),
+
+    fts_rand_float_decimals(1000),
+
     ok.
 
 test_fts(Expect, Float) ->
@@ -196,6 +201,83 @@ test_fts(Expect, Float, Args) ->
     BinExpect = list_to_binary(Expect),
     BinExpect = float_to_binary(Float,Args).
 
+
+rand_float_reasonable() ->
+    F = rand_float(),
+    case abs(F) > 1.0e238 of
+        true -> rand_float_reasonable();
+        false -> F
+    end.
+
+fts_rand_float_decimals(0) -> ok;
+fts_rand_float_decimals(N) ->
+    [begin
+         F0 = rand_float_reasonable(),
+         L0 = float_to_list(F0, [{decimals, D}]),
+         case conform_with_io_lib_format_os(F0,D) of
+             false -> ok;
+             true ->
+                 IOL = lists:flatten(io_lib:format("~.*f", [D, F0])),
+                 true = case L0 =:= IOL of
+                            true -> true;
+                            false ->
+                                io:format("F0 = ~w ~w\n",  [F0, <<F0/float>>]),
+                                io:format("decimals = ~w\n",  [D]),
+                                io:format("float_to_list = ~s\n",  [L0]),
+                                io:format("io_lib:format = ~s\n",  [IOL]),
+                                false
+                        end
+         end,
+         L1 = case D of
+                  0 -> L0 ++ ".0";
+                  _ -> L0
+              end,
+         F1 = list_to_float(L1),
+         Diff = abs(F0-F1),
+         MaxDiff = max_diff_decimals(F0, D),
+         ok = case Diff =< MaxDiff of
+                  true -> ok;
+                  false ->
+                      io:format("F0 = ~w ~w\n",  [F0, <<F0/float>>]),
+                      io:format("L1 = ~s\n",  [L1]),
+                      io:format("F1 = ~w ~w\n",  [F1, <<F1/float>>]),
+                      io:format("Diff = ~w, MaxDiff = ~w\n", [Diff, MaxDiff]),
+                      error
+              end
+     end
+     || D <- lists:seq(0,15)],
+
+    fts_rand_float_decimals(N-1).
+
+conform_with_io_lib_format_os(F, D) ->
+    case os:type() of
+        {win32,_} ->
+            %% io_lib:format("~.*f") buggy on windows? OTP-15010
+            false;
+        _ ->
+            conform_with_io_lib_format(F, D)
+    end.
+
+conform_with_io_lib_format(_, 0) ->
+    %% io_lib:format("~.*f") does not support zero decimals
+    false;
+conform_with_io_lib_format(_, D) when D > 10 ->
+    %% Seems float_to_list gets it slightly wrong sometimes for many decimals
+    false;
+conform_with_io_lib_format(F, D) ->
+    %% io_lib:format prints '0' for input bits beyond mantissa precision
+    %% float_to_list treats those unknown input bits as if they were zeros.
+    math:log2(abs(F) * math:pow(10,D)) < 54.
+
+max_diff_decimals(F, D) ->
+    IntBits = floor(math:log2(abs(F))) + 1,
+    FracBits = (52 - IntBits),
+    Log10_2 = 0.3010299956639812,  % math:log10(2)
+    MaxDec = floor(FracBits * Log10_2),
+
+    Resolution = math:pow(2, IntBits - 53),
+
+    (math:pow(10, -min(D,MaxDec)) / 2) + Resolution.
 
 %% Tests list_to_float/1.
 
@@ -331,18 +413,26 @@ t_trunc_and_friends(_Config) ->
     -18446744073709551616 = trunc_and_friends(-float(1 bsl 64)),
 
     %% Random.
+    rand_seed(),
     t_trunc_and_friends_rand(100),
     ok.
+
+rand_seed() ->
+    rand:seed(exrop),
+    io:format("\n*** rand:export_seed() = ~w\n\n", [rand:export_seed()]),
+    ok.
+
+rand_float() ->
+    F0 = rand:uniform() * math:pow(10, 50*rand:normal()),
+    case rand:uniform() of
+        U when U < 0.5 -> -F0;
+        _ -> F0
+    end.
 
 t_trunc_and_friends_rand(0) ->
     ok;
 t_trunc_and_friends_rand(N) ->
-    F0 = rand:uniform() * math:pow(10, 50*rand:normal()),
-    F = case rand:uniform() of
-	    U when U < 0.5 -> -F0;
-	    _ -> F0
-	end,
-    _ = trunc_and_friends(F),
+    _ = trunc_and_friends(rand_float()),
     t_trunc_and_friends_rand(N-1).
 
 trunc_and_friends(F) ->
@@ -414,6 +504,10 @@ t_integer_to_string(Config) when is_list(Config) ->
     test_its("A", 10, 16),
     test_its("D4BE", 54462, 16),
     test_its("-D4BE", -54462, 16),
+    test_its("FFFFFFFFFF", 1099511627775, 16),
+    test_its("123456789ABCDEF123456789ABCDEF123456789ABCDEF",
+             108977460683796539709587792812439445667270661579197935,
+             16),
 
     lists:foreach(fun(Value) ->
 			  {'EXIT', {badarg, _}} =
@@ -425,12 +519,14 @@ t_integer_to_string(Config) when is_list(Config) ->
     ok.
 
 test_its(List,Int) ->
-    Int = list_to_integer(List),
-    Int = binary_to_integer(list_to_binary(List)).
+    List = integer_to_list(Int),
+    Binary = list_to_binary(List),
+    Binary = integer_to_binary(Int).
 
 test_its(List,Int,Base) ->
-    Int = list_to_integer(List, Base),
-    Int = binary_to_integer(list_to_binary(List), Base).
+    List = integer_to_list(Int, Base),
+    Binary = list_to_binary(List),
+    Binary = integer_to_binary(Int, Base).
 
 %% Tests binary_to_integer/1.
 
@@ -491,7 +587,7 @@ t_string_to_integer(Config) when is_list(Config) ->
 				       list_to_binary(Value),Base)),
 			  {'EXIT', {badarg, _}} =
 			      (catch erlang:list_to_integer(Value,Base))
-		  end,[{" 1",1},{" 1",37},{"2",2},{"C",11},
+		  end,[{" 1",1},{" 1",37},{"2",2},{"B",11},{"b",11},{":", 16},
 		       {"1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111z",16},
 		       {"1z111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",16},
 		       {"111z11111111",16}]),

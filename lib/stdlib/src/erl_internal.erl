@@ -1,7 +1,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1998-2017. All Rights Reserved.
+%% Copyright Ericsson AB 1998-2018. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -74,8 +74,10 @@ guard_bif(element, 2) -> true;
 guard_bif(float, 1) -> true;
 guard_bif(floor, 1) -> true;
 guard_bif(hd, 1) -> true;
+guard_bif(is_map_key, 2) -> true;
 guard_bif(length, 1) -> true;
 guard_bif(map_size, 1) -> true;
+guard_bif(map_get, 2) -> true;
 guard_bif(node, 0) -> true;
 guard_bif(node, 1) -> true;
 guard_bif(round, 1) -> true;
@@ -314,6 +316,7 @@ bif(is_function, 2) -> true;
 bif(is_integer, 1) -> true;
 bif(is_list, 1) -> true;
 bif(is_map, 1) -> true;
+bif(is_map_key, 2) -> true;
 bif(is_number, 1) -> true;
 bif(is_pid, 1) -> true;
 bif(is_port, 1) -> true;
@@ -337,6 +340,7 @@ bif(list_to_tuple, 1) -> true;
 bif(load_module, 2) -> true;
 bif(make_ref, 0) -> true;
 bif(map_size,1) -> true;
+bif(map_get,2) -> true;
 bif(max,2) -> true;
 bif(min,2) -> true;
 bif(module_loaded, 1) -> true;
