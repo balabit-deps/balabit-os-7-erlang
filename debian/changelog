@@ -1,3 +1,9 @@
+erlang (1:22.0.7+dfsg-1build1~ubuntu18.04.1bb1) bionic-backports; urgency=medium
+
+  * Packaging fixes
+
+ -- Zsolt Cserna <zsolt.cserna@oneidentity.com>  Thu, 23 Jul 2020 16:28:02 +0100
+
 erlang (1:22.0.7+dfsg-1build1~ubuntu18.04.1) bionic-backports; urgency=medium
 
   * No-change backport to bionic (LP: #1864212)
